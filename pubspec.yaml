@@ -1,0 +1,16 @@
+name: qsafevault
+description: Cross-platform secure password manager
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  encrypt: ^5.0.1
+  pointycastle: ^3.6.4
+  path_provider: ^2.0.15
+  flutter_secure_storage: ^8.0.0
+  archive: ^3.3.4
+  provider: ^6.0.5
+  uuid: ^3.0.7
