@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
@@ -23,15 +22,26 @@ class _LandingPageState extends State<LandingPage> {
       final folder = await widget.storage.pickDirectoryWithFallback();
       final password = await _askForPassword(confirm: true);
       if (password == null) return;
-      await widget.storage.createEmptyDb(folderPath: folder, password: password, iterations: 200000, parts: 3);
-      final json = await widget.storage.openDb(folderPath: folder, password: password);
+
+      await widget.storage.createEmptyDb(
+        folderPath: folder,
+        password: password,
+        iterations: 200000,
+        parts: 3,
+      );
+
+      final result = await widget.storage.openDb(
+        folderPath: folder,
+        password: password,
+      );
+
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
           cryptoService: widget.cryptoService,
           folderPath: folder,
-          password: password,
-          initialJson: json,
+          secretKey: result.key,
+          initialJson: result.plaintext,
         ),
       ));
     } catch (e) {
@@ -47,14 +57,19 @@ class _LandingPageState extends State<LandingPage> {
       final folder = await widget.storage.pickDirectoryWithFallback();
       final password = await _askForPassword(confirm: false);
       if (password == null) return;
-      final json = await widget.storage.openDb(folderPath: folder, password: password);
+
+      final result = await widget.storage.openDb(
+        folderPath: folder,
+        password: password,
+      );
+
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
           cryptoService: widget.cryptoService,
           folderPath: folder,
-          password: password,
-          initialJson: json,
+          secretKey: result.key,       
+          initialJson: result.plaintext,
         ),
       ));
     } catch (e) {
@@ -123,9 +138,17 @@ class _LandingPageState extends State<LandingPage> {
             : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  ElevatedButton.icon(onPressed: _createDbFlow, icon: const Icon(Icons.add), label: const Text('Create DB')),
+                  ElevatedButton.icon(
+                    onPressed: _createDbFlow,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Create DB'),
+                  ),
                   const SizedBox(height: 16),
-                  ElevatedButton.icon(onPressed: _openDbFlow, icon: const Icon(Icons.folder_open), label: const Text('Open DB')),
+                  ElevatedButton.icon(
+                    onPressed: _openDbFlow,
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Open DB'),
+                  ),
                 ],
               ),
       ),

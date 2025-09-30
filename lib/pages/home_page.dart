@@ -1,17 +1,17 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '/models/password_entry.dart';
 import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
+import 'package:cryptography/cryptography.dart';
 import '/widgets/entry_form.dart';
 
 class HomePage extends StatefulWidget {
   final StorageService storage;
   final CryptoService cryptoService;
   final String folderPath;
-  final String password;
+  final SecretKey secretKey;
   final String initialJson;
 
   const HomePage({
@@ -19,7 +19,7 @@ class HomePage extends StatefulWidget {
     required this.storage,
     required this.cryptoService,
     required this.folderPath,
-    required this.password,
+    required this.secretKey,
     required this.initialJson,
   }) : super(key: key);
 
@@ -59,7 +59,7 @@ class _HomePageState extends State<HomePage> {
       final json = PasswordEntry.listToJson(_entries);
       await widget.storage.saveDb(
         folderPath: widget.folderPath,
-        password: widget.password,
+        key: widget.secretKey,
         jsonDb: json,
       );
       ScaffoldMessenger.of(context)

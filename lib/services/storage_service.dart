@@ -32,10 +32,10 @@ class StorageService {
   Future<void> createEmptyDb({
     required String folderPath,
     required String password,
-    int parts = 3,
-    int memoryKb = 8 * 1024, // return to 512 next time
+    int parts = 10,
+    int memoryKb = 64, // return to 512 next time
     int iterations = 3,
-    int parallelism = 4,
+    int parallelism = 2,
   }) async {
     if (password.isEmpty) throw ArgumentError('Password cannot be empty.');
     if (parts <= 0) throw ArgumentError('Parts must be > 0');
@@ -79,7 +79,7 @@ class StorageService {
 
   Future<void> saveDb({
     required String folderPath,
-    required String password,
+    required SecretKey key,
     required String jsonDb,
   }) async {
     await _lock.synchronized(() async {
@@ -88,25 +88,10 @@ class StorageService {
 
       final meta = jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
 
-      final salt = base64Decode(meta['salt'] as String);
-      final kdf = meta['kdf'] as String? ?? 'argon2id';
-      final iterations = meta['iterations'] as int? ?? 3;
-      final memoryKb = meta['memoryKb'] as int? ?? 524288;
-      final parallelism = meta['parallelism'] as int? ?? 4;
-
-      final secretKey = await cryptoService.deriveKeyFromPassword(
-        password: password,
-        salt: salt,
-        kdf: kdf,
-        iterations: iterations,
-        memoryKb: memoryKb,
-        parallelism: parallelism,
-      );
-
       final parts = meta['parts'] as int;
       await _backupDb(folderPath, parts);
 
-      final encrypted = await cryptoService.encryptUtf8(secretKey, jsonDb);
+      final encrypted = await cryptoService.encryptUtf8(key, jsonDb);
       _zeroBytes(Uint8List.fromList(utf8.encode(jsonDb)));
 
       await _writePartsAtomic(folderPath, encrypted, parts);
@@ -116,7 +101,7 @@ class StorageService {
     });
   }
 
-  Future<String> openDb({
+  Future<({String plaintext, SecretKey key})> openDb({
     required String folderPath,
     required String password,
   }) async {
@@ -145,7 +130,7 @@ class StorageService {
       final bytes = await _readAndConcatParts(folderPath, parts);
 
       final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
-      return plaintext;
+      return (plaintext: plaintext, key: secretKey);
     });
   }
 
