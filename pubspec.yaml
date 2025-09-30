@@ -4,6 +4,10 @@ publish_to: "none"
 environment:
   sdk: ">=3.0.0 <4.0.0"
 
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.6
+
 dependencies:
   flutter:
     sdk: flutter
@@ -15,6 +19,18 @@ dependencies:
   cryptography_flutter: ^2.3.2
   crypto: ^3.0.2
   synchronized: ^3.0.0
+  bitsdojo_window: ^0.1.6
 
 flutter:
   uses-material-design: true
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "public/logo.png"
+
+flutter_native_splash:
+  color: "#ffffff"
+  image: "public/logo.png"
+  android: true
+  ios: true

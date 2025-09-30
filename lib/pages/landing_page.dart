@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'package:flutter/material.dart';
 import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import '/pages/home_page.dart';
+import 'package:cryptography/cryptography.dart';
 
 class LandingPage extends StatefulWidget {
   final StorageService storage;
@@ -15,9 +17,14 @@ class LandingPage extends StatefulWidget {
 
 class _LandingPageState extends State<LandingPage> {
   bool _busy = false;
+  double _progress = 0.0;
 
   Future<void> _createDbFlow() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _progress = 0.0;
+    });
+
     try {
       final folder = await widget.storage.pickDirectoryWithFallback();
       final password = await _askForPassword(confirm: true);
@@ -30,10 +37,7 @@ class _LandingPageState extends State<LandingPage> {
         parts: 3,
       );
 
-      final result = await widget.storage.openDb(
-        folderPath: folder,
-        password: password,
-      );
+      final result = await _deriveKeyWithIsolate(folder, password);
 
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => HomePage(
@@ -52,23 +56,24 @@ class _LandingPageState extends State<LandingPage> {
   }
 
   Future<void> _openDbFlow() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _progress = 0.0;
+    });
+
     try {
       final folder = await widget.storage.pickDirectoryWithFallback();
       final password = await _askForPassword(confirm: false);
       if (password == null) return;
 
-      final result = await widget.storage.openDb(
-        folderPath: folder,
-        password: password,
-      );
+      final result = await _deriveKeyWithIsolate(folder, password);
 
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
           cryptoService: widget.cryptoService,
           folderPath: folder,
-          secretKey: result.key,       
+          secretKey: result.key,
           initialJson: result.plaintext,
         ),
       ));
@@ -77,6 +82,29 @@ class _LandingPageState extends State<LandingPage> {
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  Future<({String plaintext, SecretKey key})> _deriveKeyWithIsolate(
+      String folderPath, String password) async {
+    final receivePort = ReceivePort();
+    await Isolate.spawn(_deriveKeyIsolateEntry, [receivePort.sendPort, folderPath, password]);
+    final result = await receivePort.first as Map<String, dynamic>;
+
+    final key = SecretKey(result['keyBytes'] as List<int>);
+    final plaintext = result['plaintext'] as String;
+    return (plaintext: plaintext, key: key);
+  }
+
+  static Future<void> _deriveKeyIsolateEntry(List<dynamic> args) async {
+    final sendPort = args[0] as SendPort;
+    final folderPath = args[1] as String;
+    final password = args[2] as String;
+
+    final storage = StorageService(CryptoService());
+    final result = await storage.openDb(folderPath: folderPath, password: password);
+
+    final keyBytes = await result.key.extractBytes();
+    sendPort.send({'plaintext': result.plaintext, 'keyBytes': keyBytes});
   }
 
   Future<String?> _askForPassword({required bool confirm}) async {
@@ -131,10 +159,17 @@ class _LandingPageState extends State<LandingPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Password Manager — Landing')),
+      appBar: AppBar(title: const Text('Q-Safe Vault')),
       body: Center(
         child: _busy
-            ? const CircularProgressIndicator()
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Text('Processing...'),
+                  SizedBox(height: 16),
+                  CircularProgressIndicator(),
+                ],
+              )
             : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
