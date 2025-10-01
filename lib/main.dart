@@ -31,7 +31,13 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Q-Safe Vault',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: page,
+      home: LandingPage(storage: storage, cryptoService: cryptoService),
+      builder: (context, child) {
+        if (Platform.isWindows && child != null) {
+          return wrapWithWindowsBorder(child);
+        }
+        return child!;
+      },
     );
   }
 }

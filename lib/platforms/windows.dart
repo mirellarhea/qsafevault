@@ -19,8 +19,8 @@ Widget wrapWithWindowsBorder(Widget child) {
   if (!Platform.isWindows) return child;
 
   return WindowBorder(
-    color: Colors.blue,
-    width: 1,
+    color: const Color.fromARGB(255, 197, 132, 250),
+    width: 0,
     child: Column(
       children: [
         WindowTitleBarBox(
