@@ -150,7 +150,7 @@ jobs:
         run: |
           TAG="${{ needs.build-ubuntu.outputs.tag }}"
           echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "RELEASE_NAME=Automated Build $TAG" >> $GITHUB_ENV
+          echo "RELEASE_NAME=Build $TAG" >> $GITHUB_ENV
   
           {
             echo "RELEASE_BODY<<EOF"
