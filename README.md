@@ -1,6 +1,6 @@
-# qsafevault
+# Q-Safe Vault
 
-**Quantum-safe password manager**
+**A quantum-safe password manager**
 
 A cross-platform password manager built with Flutter using AES‑256‑GCM algorithm that aims to explore and demonstrate quantum-resistant cryptographic approaches for secure vault storage. This repository contains releases and source code of said project.
 Supported platforms:
