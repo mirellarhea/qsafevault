@@ -44,15 +44,6 @@ jobs:
         id: set-tag
         run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
-      - name: Patch Android dependencies for namespace
-        run: |
-          PUB_CACHE_DIR="${HOME}/.pub-cache/hosted/pub.dev"
-          BUILD_FILE=$(find "$PUB_CACHE_DIR" -type f -path "*/cryptography_flutter-*/android/build.gradle")
-          if [ -f "$BUILD_FILE" ]; then
-            echo "android { namespace 'dev.cryptography_flutter' }" >> "$BUILD_FILE"
-            echo "Patched $BUILD_FILE"
-          fi
-
       - name: Build Android APK
         run: flutter build apk --release
 
