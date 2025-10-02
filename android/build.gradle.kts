@@ -1,6 +1,7 @@
 import com.android.build.gradle.BaseExtension
 import org.gradle.api.tasks.Delete
 import org.gradle.kotlin.dsl.register
+import org.gradle.kotlin.dsl.configure
 
 allprojects {
     repositories {
@@ -21,15 +22,18 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Fix for Android namespace issue
 subprojects {
-    afterEvaluate {
-        if (plugins.hasPlugin("com.android.library") || plugins.hasPlugin("com.android.application")) {
-            extensions.findByName("android")?.let { androidExt ->
-                val android = androidExt as BaseExtension
-                if (android.namespace.isNullOrBlank()) {
-                    android.namespace = "com.example.${project.name}"
-                }
+    plugins.withId("com.android.library") {
+        extensions.configure<BaseExtension>("android") {
+            if (namespace.isNullOrBlank()) {
+                namespace = "com.example.${project.name}"
+            }
+        }
+    }
+    plugins.withId("com.android.application") {
+        extensions.configure<BaseExtension>("android") {
+            if (namespace.isNullOrBlank()) {
+                namespace = "com.example.${project.name}"
             }
         }
     }
