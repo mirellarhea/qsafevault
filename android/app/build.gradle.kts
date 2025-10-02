@@ -6,7 +6,6 @@ plugins {
 }
 
 android {
-    resourcePrefix = "qsafe_"
     namespace = "dev.qsafevault.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "27.0.12077973"
