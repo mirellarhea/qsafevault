@@ -1,0 +1,148 @@
+name: Build All Platforms and Release
+
+on:
+  workflow_dispatch:
+
+env:
+  PARENT_REPO: aimatochysia/qsafevault
+
+jobs:
+  build-ubuntu:
+    name: Build Android, Web, Linux
+    runs-on: ubuntu-latest
+
+    outputs:
+      tag: ${{ steps.set-tag.outputs.tag }}
+
+    steps:
+      - name: Checkout source from Parent repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.PARENT_REPO }}
+          token: ${{ secrets.ORIGIN_PAT }}
+          ref: main
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate release tag
+        id: set-tag
+        run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Build Android APK
+        run: flutter build apk
+
+      - name: Build Web
+        run: flutter build web
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+
+      - name: Build Linux
+        run: flutter build linux
+
+      - name: Prepare Ubuntu artifacts
+        run: |
+          mkdir -p dist/android
+          mkdir -p dist/web
+          mkdir -p dist/linux
+
+          cp build/app/outputs/flutter-apk/app-release.apk dist/android/app-release.apk
+          cp -r build/web/* dist/web/
+          cp -r build/linux/x64/release/bundle/* dist/linux/
+
+      - name: Upload Ubuntu artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ubuntu-artifacts
+          path: dist/
+
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    needs: build-ubuntu
+
+    steps:
+      - name: Checkout source from Parent repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.PARENT_REPO }}
+          token: ${{ secrets.ORIGIN_PAT }}
+          ref: main
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows
+
+      - name: Prepare Windows artifacts
+        run: |
+          mkdir -p dist/windows
+          xcopy /E /I /Y build\windows\runner\Release dist\windows
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-artifacts
+          path: dist/windows
+
+  release:
+    name: Create GitHub Release in Parent
+    runs-on: ubuntu-latest
+    needs: [build-ubuntu, build-windows]
+
+    steps:
+      - name: Download Ubuntu artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: ubuntu-artifacts
+          path: release-dist
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: windows-artifacts
+          path: release-dist/windows
+
+      - name: Set release metadata
+        id: release-info
+        run: |
+          TAG="v$(date +'%Y%m%d-%H%M')"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "RELEASE_NAME=Automated Build $TAG" >> $GITHUB_ENV
+
+          cat <<EOF >> $GITHUB_ENV
+RELEASE_BODY=Built automatically by Runner.
+
+Included platforms:
+- ✅ Android (.apk)
+- ✅ Web (HTML/JS/CSS)
+- ✅ Linux (binary executable)
+- ✅ Windows (.exe)
+EOF
+
+      - name: Create GitHub Release in Parent repo
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          body: ${{ env.RELEASE_BODY }}
+          token: ${{ secrets.ORIGIN_PAT }}
+          files: |
+            release-dist/android/app-release.apk
+            release-dist/web/**
+            release-dist/linux/**
+            release-dist/windows/**
