@@ -25,7 +25,17 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 'stable'
+          flutter-version: stable
+
+      - name: Cache Flutter dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            .dart_tool
+          key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            flutter-${{ runner.os }}-
 
       - name: Install dependencies
         run: flutter pub get
@@ -35,10 +45,10 @@ jobs:
         run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
       - name: Build Android APK
-        run: flutter build apk
+        run: flutter build apk --release
 
       - name: Build Web
-        run: flutter build web
+        run: flutter build web --release
 
       - name: Install Linux dependencies
         run: |
@@ -46,15 +56,12 @@ jobs:
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
 
       - name: Build Linux
-        run: flutter build linux
+        run: flutter build linux --release
 
       - name: Prepare Ubuntu artifacts
         run: |
-          mkdir -p dist/android
-          mkdir -p dist/web
-          mkdir -p dist/linux
-
-          cp build/app/outputs/flutter-apk/app-release.apk dist/android/app-release.apk
+          mkdir -p dist/android dist/web dist/linux
+          cp build/app/outputs/flutter-apk/app-release.apk dist/android/
           cp -r build/web/* dist/web/
           cp -r build/linux/x64/release/bundle/* dist/linux/
 
@@ -63,6 +70,7 @@ jobs:
         with:
           name: ubuntu-artifacts
           path: dist/
+          if-no-files-found: error
 
   build-windows:
     name: Build Windows EXE
@@ -80,13 +88,13 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 'stable'
+          flutter-version: stable
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Build Windows
-        run: flutter build windows
+        run: flutter build windows --release
 
       - name: Prepare Windows artifacts
         run: |
@@ -98,6 +106,7 @@ jobs:
         with:
           name: windows-artifacts
           path: dist/windows
+          if-no-files-found: error
 
   release:
     name: Create GitHub Release in Parent
@@ -120,13 +129,13 @@ jobs:
       - name: Set release metadata
         id: release-info
         run: |
-          TAG="v$(date +'%Y%m%d-%H%M')"
+          TAG="${{ needs.build-ubuntu.outputs.tag }}"
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=Automated Build $TAG" >> $GITHUB_ENV
 
           {
             echo "RELEASE_BODY<<EOF"
-            echo "Built automatically by Runner."
+            echo "Built automatically by GitHub Actions runner."
             echo ""
             echo "Included platforms:"
             echo "- ✅ Android (.apk)"
@@ -137,7 +146,7 @@ jobs:
           } >> $GITHUB_ENV
 
       - name: Create GitHub Release in Parent repo
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: ${{ env.RELEASE_NAME }}
