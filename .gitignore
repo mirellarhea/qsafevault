@@ -60,12 +60,10 @@ app.*.map.json
 **/ios/.generated/
 /web/.dart_tool/
 /web/build/
-**/linux/flutter/
 **/linux/CMakeFiles/
 **/linux/build/
 **/linux/.generated/
 
-**/windows/flutter/
 **/windows/CMakeFiles/
 **/windows/build/
 **/windows/.generated/
