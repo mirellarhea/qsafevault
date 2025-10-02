@@ -16,8 +16,9 @@ dependencies:
   cryptography: ^2.7.0
   file_picker: ^10.3.3
   path_provider: ^2.1.5
-  synch ronized: ^3.4.0
+  synchronized: ^3.4.0
   bitsdojo_window: ^0.1.6
+  uuid: ^4.5.1
 
 flutter:
   uses-material-design: true
