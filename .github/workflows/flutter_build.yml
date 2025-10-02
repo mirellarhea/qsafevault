@@ -44,6 +44,15 @@ jobs:
         id: set-tag
         run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
+      - name: Patch cryptography_flutter AndroidManifest.xml
+        run: |
+          PUB_CACHE_DIR="${HOME}/.pub-cache/hosted/pub.dev"
+          MANIFEST_FILE=$(find "$PUB_CACHE_DIR" -type f -path "*/cryptography_flutter-*/android/src/main/AndroidManifest.xml")
+          if [ -f "$MANIFEST_FILE" ]; then
+            sed -i 's/package="[^"]*"//g' "$MANIFEST_FILE"
+            echo "Patched package attribute in $MANIFEST_FILE"
+          fi
+          
       - name: Build Android APK
         run: flutter build apk --release
 
