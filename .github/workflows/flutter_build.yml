@@ -98,8 +98,13 @@ jobs:
 
       - name: Prepare Windows artifacts
         run: |
-          mkdir -p dist/windows
-          xcopy /E /I /Y build\windows\runner\Release dist\windows
+          # Create the destination folder
+          New-Item -ItemType Directory -Force -Path dist\windows
+      
+          # Copy all Release files
+          Copy-Item -Path build\windows\x64\runner\Release\* -Destination dist\windows -Recurse -Force
+        shell: pwsh
+
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
