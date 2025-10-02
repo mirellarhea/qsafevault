@@ -1,3 +1,7 @@
+import com.android.build.gradle.BaseExtension
+import org.gradle.api.tasks.Delete
+import org.gradle.kotlin.dsl.register
+
 allprojects {
     repositories {
         google()
@@ -12,18 +16,20 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// =======================
 // Fix for Android namespace issue
-// =======================
-subprojects { subproject ->
+subprojects {
     afterEvaluate {
-        if (subproject.plugins.hasPlugin('com.android.library') || subproject.plugins.hasPlugin('com.android.application')) {
-            if (!subproject.android.hasProperty("namespace")) {
-                subproject.android.namespace = "com.example.${subproject.name}"
+        if (plugins.hasPlugin("com.android.library") || plugins.hasPlugin("com.android.application")) {
+            extensions.findByName("android")?.let { androidExt ->
+                val android = androidExt as BaseExtension
+                if (android.namespace.isNullOrBlank()) {
+                    android.namespace = "com.example.${project.name}"
+                }
             }
         }
     }
