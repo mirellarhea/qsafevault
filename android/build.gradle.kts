@@ -21,7 +21,6 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
-
 subprojects {
     plugins.withId("com.android.library") {
         extensions.configure<BaseExtension>("android") {
