@@ -120,27 +120,27 @@ jobs:
     name: Create GitHub Release in Parent
     runs-on: ubuntu-latest
     needs: [build-ubuntu, build-windows]
-
+  
     steps:
       - name: Download Ubuntu artifacts
         uses: actions/download-artifact@v4
         with:
           name: ubuntu-artifacts
           path: release-dist
-
+  
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: windows-artifacts
           path: release-dist/windows
-
+  
       - name: Set release metadata
         id: release-info
         run: |
           TAG="${{ needs.build-ubuntu.outputs.tag }}"
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=Automated Build $TAG" >> $GITHUB_ENV
-
+  
           {
             echo "RELEASE_BODY<<EOF"
             echo "Built automatically by GitHub Actions runner."
@@ -152,10 +152,11 @@ jobs:
             echo "- ✅ Windows (.exe)"
             echo "EOF"
           } >> $GITHUB_ENV
-
+  
       - name: Create GitHub Release in Parent repo
         uses: softprops/action-gh-release@v2
         with:
+          repository: aimatochysia/qsafevault
           tag_name: ${{ env.TAG }}
           name: ${{ env.RELEASE_NAME }}
           body: ${{ env.RELEASE_BODY }}
@@ -165,3 +166,4 @@ jobs:
             release-dist/web/**
             release-dist/linux/**
             release-dist/windows/**
+          overwrite_files: true
