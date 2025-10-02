@@ -59,7 +59,7 @@ jobs:
           cp -r build/linux/x64/release/bundle/* dist/linux/
 
       - name: Upload Ubuntu artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ubuntu-artifacts
           path: dist/
@@ -94,7 +94,7 @@ jobs:
           xcopy /E /I /Y build\windows\runner\Release dist\windows
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
           path: dist/windows
@@ -106,13 +106,13 @@ jobs:
 
     steps:
       - name: Download Ubuntu artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ubuntu-artifacts
           path: release-dist
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: windows-artifacts
           path: release-dist/windows
