@@ -124,15 +124,17 @@ jobs:
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=Automated Build $TAG" >> $GITHUB_ENV
 
-          cat <<EOF >> $GITHUB_ENV
-RELEASE_BODY=Built automatically by Runner.
-
-Included platforms:
-- ✅ Android (.apk)
-- ✅ Web (HTML/JS/CSS)
-- ✅ Linux (binary executable)
-- ✅ Windows (.exe)
-EOF
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo "Built automatically by Runner."
+            echo ""
+            echo "Included platforms:"
+            echo "- ✅ Android (.apk)"
+            echo "- ✅ Web (HTML/JS/CSS)"
+            echo "- ✅ Linux (binary executable)"
+            echo "- ✅ Windows (.exe)"
+            echo "EOF"
+          } >> $GITHUB_ENV
 
       - name: Create GitHub Release in Parent repo
         uses: softprops/action-gh-release@v1
