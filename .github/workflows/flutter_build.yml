@@ -44,11 +44,11 @@ jobs:
         id: set-tag
         run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
           
-      # - name: Build Android APK
-      #   run: flutter build apk --release
+      - name: Build Android APK
+        run: flutter build apk --release
 
-      # - name: Build Web
-      #   run: flutter build web --release
+      - name: Build Web
+        run: flutter build web --release
 
       - name: Install Linux dependencies
         run: |
