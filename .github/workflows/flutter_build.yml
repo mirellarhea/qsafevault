@@ -68,11 +68,22 @@ jobs:
           cp -r build/web/* dist/web/
           cp -r build/linux/x64/release/bundle/* dist/linux/
 
+      - name: Package Ubuntu artifacts
+        run: |
+          cd dist
+          zip -r ../qsafevault-android.zip android
+          zip -r ../qsafevault-web.zip web
+          zip -r ../qsafevault-linux.zip linux
+          cd ..
+
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ubuntu-artifacts
-          path: dist/
+          path: |
+            qsafevault-android.zip
+            qsafevault-web.zip
+            qsafevault-linux.zip
           if-no-files-found: error
 
   build-windows:
@@ -101,19 +112,19 @@ jobs:
 
       - name: Prepare Windows artifacts
         run: |
-          # Create the destination folder
           New-Item -ItemType Directory -Force -Path dist\windows
-      
-          # Copy all Release files
           Copy-Item -Path build\windows\x64\runner\Release\* -Destination dist\windows -Recurse -Force
         shell: pwsh
 
+      - name: Package Windows artifacts
+        run: Compress-Archive -Path dist\windows -DestinationPath qsafevault-windows.zip
+        shell: pwsh
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: dist/windows
+          path: qsafevault-windows.zip
           if-no-files-found: error
 
   release:
@@ -132,7 +143,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-artifacts
-          path: release-dist/windows
+          path: release-dist
   
       - name: Set release metadata
         id: release-info
@@ -145,11 +156,11 @@ jobs:
             echo "RELEASE_BODY<<EOF"
             echo "Built automatically by GitHub Actions runner."
             echo ""
-            echo "Included platforms:"
-            echo "- ✅ Android (.apk)"
-            echo "- ✅ Web (HTML/JS/CSS)"
-            echo "- ✅ Linux (binary executable)"
-            echo "- ✅ Windows (.exe)"
+            echo "Included platforms (as zips):"
+            echo "- ✅ Android (.apk in qsafevault-android.zip)"
+            echo "- ✅ Web (qsafevault-web.zip)"
+            echo "- ✅ Linux (qsafevault-linux.zip)"
+            echo "- ✅ Windows (qsafevault-windows.zip)"
             echo "EOF"
           } >> $GITHUB_ENV
   
@@ -162,8 +173,8 @@ jobs:
           body: ${{ env.RELEASE_BODY }}
           token: ${{ secrets.ORIGIN_PAT }}
           files: |
-            release-dist/android/app-release.apk
-            release-dist/web/**
-            release-dist/linux/**
-            release-dist/windows/**
+            release-dist/qsafevault-android.zip
+            release-dist/qsafevault-web.zip
+            release-dist/qsafevault-linux.zip
+            release-dist/qsafevault-windows.zip
           overwrite_files: true
