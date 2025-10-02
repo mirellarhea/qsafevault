@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout source from Parent repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
           token: ${{ secrets.ORIGIN_PAT }}
@@ -71,7 +71,7 @@ jobs:
 
     steps:
       - name: Checkout source from Parent repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
           token: ${{ secrets.ORIGIN_PAT }}
