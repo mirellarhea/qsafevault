@@ -219,8 +219,10 @@ class _HomePageState extends State<HomePage> {
             hintText: 'Search...',
             border: InputBorder.none,
           ),
-          style: const TextStyle(color: Colors.white),
-          cursorColor: Colors.white,
+          style: const TextStyle(
+            color: Colors.black,
+          ),
+          cursorColor: Colors.black,
           onChanged: (val) => setState(() => _searchQuery = val),
         ),
         actions: [

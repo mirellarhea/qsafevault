@@ -33,13 +33,13 @@ class _LandingPageState extends State<LandingPage> {
       await widget.storage.createEmptyDb(
         folderPath: folder,
         password: password,
-        iterations: 200000,
-        parts: 3,
+        iterations: 50000,
+        parts: 10,
       );
 
       final result = await _deriveKeyWithIsolate(folder, password);
 
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
           cryptoService: widget.cryptoService,
@@ -68,7 +68,7 @@ class _LandingPageState extends State<LandingPage> {
 
       final result = await _deriveKeyWithIsolate(folder, password);
 
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
           cryptoService: widget.cryptoService,
