@@ -16,6 +16,7 @@ class StorageService {
   static const metaFileName = 'pwdb.meta.json';
   static const baseEncryptedName = 'pwdb.enc';
   static const backupSuffix = '.bak';
+  static const derivedKeyFileName = 'derived.key';
 
   final _lock = Lock();
 
@@ -30,6 +31,46 @@ class StorageService {
     return dir.path;
   }
 
+  Future<String> ensureEmptyOrPwdbSubdir(String folderPath) async {
+    final dir = Directory(folderPath);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+      return dir.path;
+    }
+
+    final contents = await dir.list(followLinks: false).toList();
+    if (contents.isEmpty) {
+      return dir.path;
+    }
+
+    final pwdbDir = Directory('${dir.path}/pwdb');
+    if (!await pwdbDir.exists()) {
+      await pwdbDir.create(recursive: true);
+    }
+    return pwdbDir.path;
+  }
+
+  Future<String> validateDbFolder(String folderPath) async {
+    final metaFile = File('$folderPath/$metaFileName');
+    if (await metaFile.exists()) return folderPath;
+
+    final alt = Directory('$folderPath/pwdb');
+    final altMeta = File('${alt.path}/$metaFileName');
+    if (await altMeta.exists()) return alt.path;
+
+    throw Exception('Invalid folder: missing $metaFileName');
+  }
+
+  Future<bool> isDirectoryEmpty(String path) async {
+    final dir = Directory(path);
+    if (!await dir.exists()) return true;
+    try {
+      return await dir.list(followLinks: false).isEmpty;
+    } catch (_) {
+      return true;
+    }
+  }
+
   Future<void> createEmptyDb({
     required String folderPath,
     required String password,
@@ -40,6 +81,8 @@ class StorageService {
   }) async {
     if (password.isEmpty) throw ArgumentError('Password cannot be empty.');
     if (parts <= 0) throw ArgumentError('Parts must be > 0');
+
+    folderPath = await ensureEmptyOrPwdbSubdir(folderPath);
 
     final salt = _secureRandomBytes(cryptoService.saltLength);
 
@@ -75,6 +118,7 @@ class StorageService {
 
       final metaFile = File('$folderPath/$metaFileName');
       await metaFile.writeAsString(jsonEncode(meta), flush: true);
+      await _storeDerivedKey(folderPath, secretKey);
     });
   }
 
@@ -105,6 +149,71 @@ class StorageService {
     }
   }
 
+  Future<({String plaintext, SecretKey key})> openDb({
+    required String folderPath,
+    required String password,
+  }) async {
+    final metaFile = File('$folderPath/$metaFileName');
+    if (!await metaFile.exists()) {
+      throw Exception('Meta file missing. Did you select the correct folder?');
+    }
+
+    return _lock.synchronized(() async {
+      final meta =
+          jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+
+      final salt = base64Decode(meta['salt'] as String);
+      final kdf = meta['kdf'] as String? ?? 'argon2id';
+      final iterations = meta['iterations'] as int? ?? 3;
+      final memoryKb = meta['memoryKb'] as int? ?? 524288;
+      final parallelism = meta['parallelism'] as int? ?? 4;
+
+      SecretKey secretKey;
+      final derivedKeyFile = File('$folderPath/$derivedKeyFileName');
+
+      if (await derivedKeyFile.exists()) {
+        try {
+          final raw = await derivedKeyFile.readAsBytes();
+          secretKey = SecretKey(raw);
+          final parts = meta['parts'] as int;
+          final bytes = await _readAndConcatParts(folderPath, parts);
+          await cryptoService.decryptUtf8(secretKey, bytes);
+        } catch (_) {
+          secretKey = await cryptoService.deriveKeyFromPassword(
+            password: password,
+            salt: salt,
+            kdf: kdf,
+            iterations: iterations,
+            memoryKb: memoryKb,
+            parallelism: parallelism,
+          );
+          await _storeDerivedKey(folderPath, secretKey);
+        }
+      } else {
+        secretKey = await cryptoService.deriveKeyFromPassword(
+          password: password,
+          salt: salt,
+          kdf: kdf,
+          iterations: iterations,
+          memoryKb: memoryKb,
+          parallelism: parallelism,
+        );
+        await _storeDerivedKey(folderPath, secretKey);
+      }
+
+      final parts = meta['parts'] as int;
+      final bytes = await _readAndConcatParts(folderPath, parts);
+      final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
+      return (plaintext: plaintext, key: secretKey);
+    });
+  }
+
+  Future<void> _storeDerivedKey(String folderPath, SecretKey key) async {
+    final raw = await key.extractBytes();
+    final f = File('$folderPath/$derivedKeyFileName');
+    await f.writeAsBytes(raw, flush: true);
+  }
+
   Future<void> saveDb({
     required String folderPath,
     required SecretKey key,
@@ -114,7 +223,8 @@ class StorageService {
       final metaFile = File('$folderPath/$metaFileName');
       if (!await metaFile.exists()) throw Exception('Meta file missing.');
 
-      final meta = jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+      final meta =
+          jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
 
       final parts = meta['parts'] as int;
       await _backupDb(folderPath, parts);
@@ -129,46 +239,25 @@ class StorageService {
     });
   }
 
-  Future<({String plaintext, SecretKey key})> openDb({
-    required String folderPath,
-    required String password,
-  }) async {
-    return _lock.synchronized(() async {
-      final metaFile = File('$folderPath/$metaFileName');
-      if (!await metaFile.exists()) throw Exception('Meta file missing.');
-
-      final meta = jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
-
-      final salt = base64Decode(meta['salt'] as String);
-      final kdf = meta['kdf'] as String? ?? 'argon2id';
-      final iterations = meta['iterations'] as int? ?? 3;
-      final memoryKb = meta['memoryKb'] as int? ?? 524288;
-      final parallelism = meta['parallelism'] as int? ?? 4;
-
-      final secretKey = await cryptoService.deriveKeyFromPassword(
-        password: password,
-        salt: salt,
-        kdf: kdf,
-        iterations: iterations,
-        memoryKb: memoryKb,
-        parallelism: parallelism,
-      );
-
-      final parts = meta['parts'] as int;
-      final bytes = await _readAndConcatParts(folderPath, parts);
-
-      final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
-      return (plaintext: plaintext, key: secretKey);
-    });
-  }
-
   Future<void> _backupDb(String folderPath, int parts) async {
     for (var i = 0; i < parts; i++) {
       final file = File('$folderPath/$baseEncryptedName.part${i + 1}');
       if (await file.exists()) {
-        final backupFile = File('$folderPath/$baseEncryptedName.part${i + 1}$backupSuffix');
+        final backupFile =
+            File('$folderPath/$baseEncryptedName.part${i + 1}$backupSuffix');
         await file.copy(backupFile.path);
       }
+    }
+  }
+
+  Future<void> deleteDerivedKey(String folderPath) async {
+    try {
+      final keyFile = File('$folderPath/$derivedKeyFileName');
+      if (await keyFile.exists()) {
+        await keyFile.delete();
+      }
+    } catch (e) {
+      throw Exception('Failed to delete derived key: $e');
     }
   }
 
@@ -182,7 +271,8 @@ class StorageService {
     return Uint8List.fromList(buffer);
   }
 
-  Future<void> _writePartsAtomic(String folderPath, Uint8List data, int parts) async {
+  Future<void> _writePartsAtomic(
+      String folderPath, Uint8List data, int parts) async {
     final n = data.length;
     final partSize = (n / parts).ceil();
     for (var i = 0; i < parts; i++) {

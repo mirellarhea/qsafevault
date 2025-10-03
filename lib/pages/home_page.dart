@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '/models/password_entry.dart';
@@ -112,6 +111,46 @@ class _HomePageState extends State<HomePage> {
             onPressed: () {
               setState(() => _entries.removeWhere((x) => x.id == e.id));
               Navigator.of(context).pop();
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteDerivedKey() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Derived Key'),
+        content: const Text(
+            'This will remove the derived key file. You will need to re-enter your password to access the vault again.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.of(context).pop();
+
+              try {
+                await widget.storage.deleteDerivedKey(widget.folderPath);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Derived key deleted')),
+                  );
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error deleting key: $e')),
+                  );
+                }
+              }
             },
             child: const Text('Delete'),
           ),
@@ -247,6 +286,12 @@ class _HomePageState extends State<HomePage> {
               separatorBuilder: (_, __) => const Divider(),
               itemBuilder: (_, i) => _row(_filteredEntries[i]),
             ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _deleteDerivedKey,
+        icon: const Icon(Icons.lock_reset),
+        label: const Text("Delete Key"),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }

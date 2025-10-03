@@ -26,8 +26,10 @@ class PasswordEntry {
       username: j['username'] as String? ?? '',
       email: j['email'] as String? ?? '',
       password: j['password'] as String? ?? '',
-      createdAt: j['createdAt'] as int? ?? DateTime.now().millisecondsSinceEpoch,
-      updatedAt: j['updatedAt'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      createdAt:
+          j['createdAt'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      updatedAt:
+          j['updatedAt'] as int? ?? DateTime.now().millisecondsSinceEpoch,
     );
   }
 
@@ -43,7 +45,9 @@ class PasswordEntry {
 
   static List<PasswordEntry> listFromJson(String jsonStr) {
     final arr = json.decode(jsonStr) as List<dynamic>;
-    return arr.map((e) => PasswordEntry.fromJson(e as Map<String, dynamic>)).toList();
+    return arr
+        .map((e) => PasswordEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   static String listToJson(List<PasswordEntry> list) {

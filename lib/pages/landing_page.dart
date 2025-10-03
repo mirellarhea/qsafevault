@@ -1,10 +1,10 @@
-import 'dart:convert';
 import 'dart:isolate';
 import 'package:flutter/material.dart';
 import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import '/pages/home_page.dart';
 import 'package:cryptography/cryptography.dart';
+import 'dart:io';
 
 class LandingPage extends StatefulWidget {
   final StorageService storage;
@@ -20,21 +20,38 @@ class LandingPage extends StatefulWidget {
 class _LandingPageState extends State<LandingPage> {
   bool _busy = false;
   double _progress = 0.0;
+  String _status = "";
 
   Future<void> _createDbFlow() async {
-    setState(() {
-      _busy = true;
-      _progress = 0.0;
-    });
-
     try {
-      final folder = await widget.storage.pickDirectoryWithFallback();
+      final rawFolder = await widget.storage.pickDirectoryWithFallback();
+
+      final isEmpty = await widget.storage.isDirectoryEmpty(rawFolder);
+      if (!isEmpty) {
+        final proceed = await _askConfirmationDialog(
+          title: "Non-empty directory",
+          message:
+              "The selected folder is not empty. A new subfolder will be created inside.\n\nProceed?",
+        );
+        if (proceed != true) return;
+      }
+
+      final safeFolder =
+          await widget.storage.ensureEmptyOrPwdbSubdir(rawFolder);
+
       final password = await _askForPassword(confirm: true);
       if (password == null) return;
 
-      // Use isolate to create DB without blocking UI
+      setState(() {
+        _busy = true;
+        _progress = 0.0;
+        _status = "Creating secure database… (est. ~30s)";
+      });
+
+      _simulateProgress(duration: const Duration(seconds: 30));
+
       final error = await _createEmptyDbWithIsolate(
-        folderPath: folder,
+        folderPath: safeFolder,
         password: password,
         parts: 10,
         iterations: 50000,
@@ -43,13 +60,26 @@ class _LandingPageState extends State<LandingPage> {
       );
       if (error != null) throw Exception(error);
 
-      final result = await _deriveKeyWithIsolate(folder, password);
+      setState(() {
+        _status = "Finalizing and deriving key…";
+        _progress = 0.85;
+      });
 
+      final result = await _deriveKeyWithIsolate(safeFolder, password);
+
+      setState(() {
+        _progress = 1.0;
+        _status = "Database ready!";
+      });
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (!mounted) return;
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
           cryptoService: widget.cryptoService,
-          folderPath: folder,
+          folderPath: safeFolder,
           secretKey: result.key,
           initialJson: result.plaintext,
         ),
@@ -57,7 +87,11 @@ class _LandingPageState extends State<LandingPage> {
     } catch (e) {
       _showError(e.toString());
     } finally {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _progress = 0.0;
+        _status = "";
+      });
     }
   }
 
@@ -83,23 +117,43 @@ class _LandingPageState extends State<LandingPage> {
       ],
     );
     final message = await receivePort.first;
-    if (message == null) return null; // success
-    return message.toString(); // error message
+    if (message == null) return null;
+    return message.toString();
   }
 
   Future<void> _openDbFlow() async {
-    setState(() {
-      _busy = true;
-      _progress = 0.0;
-    });
-
     try {
-      final folder = await widget.storage.pickDirectoryWithFallback();
+      final rawFolder = await widget.storage.pickDirectoryWithFallback();
+
+      final folder = await widget.storage.validateDbFolder(rawFolder);
+
       final password = await _askForPassword(confirm: false);
       if (password == null) return;
 
+      final derivedKeyFile =
+          File('${folder}/${StorageService.derivedKeyFileName}');
+      final longFlow = !await derivedKeyFile.exists();
+
+      setState(() {
+        _busy = true;
+        _progress = 0.0;
+        _status = longFlow
+            ? "Deriving key from password… (est. ~30s)"
+            : "Opening database… (est. ~3s)";
+      });
+
+      _simulateProgress(duration: Duration(seconds: longFlow ? 30 : 3));
+
       final result = await _deriveKeyWithIsolate(folder, password);
 
+      setState(() {
+        _progress = 1.0;
+        _status = "Unlocked!";
+      });
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (!mounted) return;
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => HomePage(
           storage: widget.storage,
@@ -112,7 +166,11 @@ class _LandingPageState extends State<LandingPage> {
     } catch (e) {
       _showError(e.toString());
     } finally {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _progress = 0.0;
+        _status = "";
+      });
     }
   }
 
@@ -139,6 +197,19 @@ class _LandingPageState extends State<LandingPage> {
 
     final keyBytes = await result.key.extractBytes();
     sendPort.send({'plaintext': result.plaintext, 'keyBytes': keyBytes});
+  }
+
+  void _simulateProgress({required Duration duration}) {
+    final startTime = DateTime.now();
+    Future.doWhile(() async {
+      if (!_busy) return false;
+      final elapsed = DateTime.now().difference(startTime);
+      final fraction = elapsed.inMilliseconds / duration.inMilliseconds;
+      if (fraction >= 0.7) return false;
+      setState(() => _progress = fraction.clamp(0.0, 1.0));
+      await Future.delayed(const Duration(milliseconds: 200));
+      return true;
+    });
   }
 
   Future<String?> _askForPassword({required bool confirm}) async {
@@ -192,8 +263,30 @@ class _LandingPageState extends State<LandingPage> {
     return res;
   }
 
+  Future<bool?> _askConfirmationDialog(
+      {required String title, required String message}) async {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Proceed')),
+        ],
+      ),
+    );
+  }
+
   void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: Colors.red.shade700,
+    ));
   }
 
   @override
@@ -204,23 +297,27 @@ class _LandingPageState extends State<LandingPage> {
         child: _busy
             ? Column(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Text('Processing...'),
-                  SizedBox(height: 16),
-                  CircularProgressIndicator(),
+                children: [
+                  Text("$_status\n${(_progress * 100).toStringAsFixed(0)}%",
+                      textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: 250,
+                    child: LinearProgressIndicator(value: _progress),
+                  ),
                 ],
               )
             : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   ElevatedButton.icon(
-                    onPressed: _createDbFlow,
+                    onPressed: _busy ? null : _createDbFlow,
                     icon: const Icon(Icons.add),
                     label: const Text('Create DB'),
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
-                    onPressed: _openDbFlow,
+                    onPressed: _busy ? null : _openDbFlow,
                     icon: const Icon(Icons.folder_open),
                     label: const Text('Open DB'),
                   ),
