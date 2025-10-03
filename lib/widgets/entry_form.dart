@@ -6,7 +6,8 @@ class EntryForm extends StatefulWidget {
   final PasswordEntry? existing;
   final void Function(PasswordEntry) onSave;
 
-  const EntryForm({Key? key, this.existing, required this.onSave}) : super(key: key);
+  const EntryForm({Key? key, this.existing, required this.onSave})
+      : super(key: key);
 
   @override
   State<EntryForm> createState() => _EntryFormState();
@@ -42,11 +43,13 @@ class _EntryFormState extends State<EntryForm> {
               TextFormField(
                 controller: _siteCtl,
                 decoration: InputDecoration(labelText: 'Site'),
-                validator: (v) => (v == null || v.isEmpty) ? 'Please enter site' : null,
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Please enter site' : null,
               ),
               TextFormField(
                 controller: _userCtl,
-                decoration: InputDecoration(labelText: 'Username (or leave empty if Email used)'),
+                decoration: InputDecoration(
+                    labelText: 'Username (or leave empty if Email used)'),
               ),
               TextFormField(
                 controller: _emailCtl,
@@ -56,14 +59,17 @@ class _EntryFormState extends State<EntryForm> {
                 controller: _passCtl,
                 decoration: InputDecoration(labelText: 'Password'),
                 obscureText: true,
-                validator: (v) => (v == null || v.isEmpty) ? 'Please enter password' : null,
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Please enter password' : null,
               ),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel')),
         ElevatedButton(
             onPressed: () {
               if (_formKey.currentState?.validate() ?? false) {

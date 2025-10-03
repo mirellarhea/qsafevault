@@ -126,7 +126,8 @@ class _HomePageState extends State<HomePage> {
       title: Text(e.site),
       subtitle: Text(primary),
       trailing: Wrap(spacing: 8, children: [
-        IconButton(onPressed: () => _editEntry(e), icon: const Icon(Icons.edit)),
+        IconButton(
+            onPressed: () => _editEntry(e), icon: const Icon(Icons.edit)),
         IconButton(
             onPressed: () => _deleteEntry(e), icon: const Icon(Icons.delete)),
       ]),

@@ -4,6 +4,7 @@ import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import 'platforms/windows.dart';
 import 'dart:io';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -19,7 +20,8 @@ void main() {
 class MyApp extends StatelessWidget {
   final StorageService storage;
   final CryptoService cryptoService;
-  const MyApp({Key? key, required this.storage, required this.cryptoService}) : super(key: key);
+  const MyApp({Key? key, required this.storage, required this.cryptoService})
+      : super(key: key);
 
   @override
   Widget build(BuildContext context) {

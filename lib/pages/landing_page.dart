@@ -9,7 +9,9 @@ import 'package:cryptography/cryptography.dart';
 class LandingPage extends StatefulWidget {
   final StorageService storage;
   final CryptoService cryptoService;
-  const LandingPage({Key? key, required this.storage, required this.cryptoService}) : super(key: key);
+  const LandingPage(
+      {Key? key, required this.storage, required this.cryptoService})
+      : super(key: key);
 
   @override
   State<LandingPage> createState() => _LandingPageState();
@@ -30,12 +32,16 @@ class _LandingPageState extends State<LandingPage> {
       final password = await _askForPassword(confirm: true);
       if (password == null) return;
 
-      await widget.storage.createEmptyDb(
+      // Use isolate to create DB without blocking UI
+      final error = await _createEmptyDbWithIsolate(
         folderPath: folder,
         password: password,
-        iterations: 50000,
         parts: 10,
+        iterations: 50000,
+        memoryKb: 64,
+        parallelism: 2,
       );
+      if (error != null) throw Exception(error);
 
       final result = await _deriveKeyWithIsolate(folder, password);
 
@@ -53,6 +59,32 @@ class _LandingPageState extends State<LandingPage> {
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  Future<String?> _createEmptyDbWithIsolate({
+    required String folderPath,
+    required String password,
+    int parts = 10,
+    int memoryKb = 64,
+    int iterations = 3,
+    int parallelism = 2,
+  }) async {
+    final receivePort = ReceivePort();
+    await Isolate.spawn(
+      StorageService.createEmptyDbIsolateEntry,
+      [
+        receivePort.sendPort,
+        folderPath,
+        password,
+        parts,
+        memoryKb,
+        iterations,
+        parallelism
+      ],
+    );
+    final message = await receivePort.first;
+    if (message == null) return null; // success
+    return message.toString(); // error message
   }
 
   Future<void> _openDbFlow() async {
@@ -87,7 +119,8 @@ class _LandingPageState extends State<LandingPage> {
   Future<({String plaintext, SecretKey key})> _deriveKeyWithIsolate(
       String folderPath, String password) async {
     final receivePort = ReceivePort();
-    await Isolate.spawn(_deriveKeyIsolateEntry, [receivePort.sendPort, folderPath, password]);
+    await Isolate.spawn(
+        _deriveKeyIsolateEntry, [receivePort.sendPort, folderPath, password]);
     final result = await receivePort.first as Map<String, dynamic>;
 
     final key = SecretKey(result['keyBytes'] as List<int>);
@@ -101,7 +134,8 @@ class _LandingPageState extends State<LandingPage> {
     final password = args[2] as String;
 
     final storage = StorageService(CryptoService());
-    final result = await storage.openDb(folderPath: folderPath, password: password);
+    final result =
+        await storage.openDb(folderPath: folderPath, password: password);
 
     final keyBytes = await result.key.extractBytes();
     sendPort.send({'plaintext': result.plaintext, 'keyBytes': keyBytes});
@@ -114,7 +148,8 @@ class _LandingPageState extends State<LandingPage> {
     final res = await showDialog<String?>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(confirm ? 'Create DB - set password' : 'Open DB - enter password'),
+        title: Text(
+            confirm ? 'Create DB - set password' : 'Open DB - enter password'),
         content: Form(
           key: formKey,
           child: Column(
@@ -124,20 +159,25 @@ class _LandingPageState extends State<LandingPage> {
                 controller: passwordCtl,
                 decoration: const InputDecoration(labelText: 'Password'),
                 obscureText: true,
-                validator: (v) => (v == null || v.length < 8) ? 'Password >= 8 chars' : null,
+                validator: (v) =>
+                    (v == null || v.length < 8) ? 'Password >= 8 chars' : null,
               ),
               if (confirm)
                 TextFormField(
                   controller: password2Ctl,
-                  decoration: const InputDecoration(labelText: 'Confirm password'),
+                  decoration:
+                      const InputDecoration(labelText: 'Confirm password'),
                   obscureText: true,
-                  validator: (v) => (v != passwordCtl.text) ? 'Passwords do not match' : null,
+                  validator: (v) =>
+                      (v != passwordCtl.text) ? 'Passwords do not match' : null,
                 ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(null), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
               if (formKey.currentState?.validate() ?? false) {

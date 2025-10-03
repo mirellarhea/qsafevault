@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:math';
+import 'dart:isolate';
 import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -75,6 +76,33 @@ class StorageService {
       final metaFile = File('$folderPath/$metaFileName');
       await metaFile.writeAsString(jsonEncode(meta), flush: true);
     });
+  }
+
+  static Future<void> createEmptyDbIsolateEntry(List<dynamic> args) async {
+    final SendPort sendPort = args[0];
+    final String folderPath = args[1];
+    final String password = args[2];
+    final int parts = args[3];
+    final int memoryKb = args[4];
+    final int iterations = args[5];
+    final int parallelism = args[6];
+
+    final cryptoService = CryptoService();
+    final storageService = StorageService(cryptoService);
+
+    try {
+      await storageService.createEmptyDb(
+        folderPath: folderPath,
+        password: password,
+        parts: parts,
+        memoryKb: memoryKb,
+        iterations: iterations,
+        parallelism: parallelism,
+      );
+      sendPort.send(null);
+    } catch (e) {
+      sendPort.send(e.toString());
+    }
   }
 
   Future<void> saveDb({
