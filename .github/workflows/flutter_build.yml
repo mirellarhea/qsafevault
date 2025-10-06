@@ -44,8 +44,16 @@ jobs:
         id: set-tag
         run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
           
-      - name: Build Android APK
+      - name: Decode Android keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/qsafevault-release-key.jks
+
+      - name: Build Signed Android APK
         run: flutter build apk --release
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Build Web
         run: flutter build web --release
