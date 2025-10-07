@@ -17,8 +17,17 @@ class StorageService {
   static const baseEncryptedName = 'pwdb.enc';
   static const backupSuffix = '.bak';
   static const derivedKeyFileName = 'derived.key';
+  static const _verifierLabel = 'q-safe-verifier';
 
   final _lock = Lock();
+
+  static const int fastKdfIterations = 10000;
+  static const int fastKdfSaltLen = 16;
+  static final Pbkdf2 _fastKdf = Pbkdf2(
+    macAlgorithm: Hmac.sha256(),
+    iterations: fastKdfIterations,
+    bits: 256,
+  );
 
   Future<String> pickDirectoryWithFallback() async {
     try {
@@ -75,7 +84,7 @@ class StorageService {
     required String folderPath,
     required String password,
     int parts = 10,
-    int memoryKb = 64, // return to 512 next time
+    int memoryKb = 64,
     int iterations = 3,
     int parallelism = 2,
   }) async {
@@ -86,7 +95,7 @@ class StorageService {
 
     final salt = _secureRandomBytes(cryptoService.saltLength);
 
-    final secretKey = await cryptoService.deriveKeyFromPassword(
+    final strongKey = await cryptoService.deriveKeyFromPassword(
       password: password,
       salt: salt,
       kdf: 'argon2id',
@@ -96,14 +105,22 @@ class StorageService {
     );
 
     final initialJson = jsonEncode(<dynamic>[]);
-    final encrypted = await cryptoService.encryptUtf8(secretKey, initialJson);
+    final encrypted = await cryptoService.encryptUtf8(strongKey, initialJson);
     _zeroBytes(Uint8List.fromList(utf8.encode(initialJson)));
+
+    final fastSalt = _secureRandomBytes(fastKdfSaltLen);
+
+    final fastKey = await _deriveFastKey(password, fastSalt);
+    final wrapped =
+        await _wrapKeyWithAesGcm(fastKey, await strongKey.extractBytes());
+
+    final verifier = await _makeVerifier(strongKey);
 
     await _lock.synchronized(() async {
       await _writePartsAtomic(folderPath, encrypted, parts);
 
       final meta = {
-        'version': 2,
+        'version': 3,
         'kdf': 'argon2id',
         'memoryKb': memoryKb,
         'iterations': iterations,
@@ -114,12 +131,21 @@ class StorageService {
         'parts': parts,
         'fileBase': baseEncryptedName,
         'created': DateTime.now().toUtc().toIso8601String(),
+        'verifier': base64Encode(verifier),
+        'fast': {
+          'kdf': 'pbkdf2',
+          'iterations': fastKdfIterations,
+          'salt': base64Encode(fastSalt),
+        }
       };
 
       final metaFile = File('$folderPath/$metaFileName');
       await metaFile.writeAsString(jsonEncode(meta), flush: true);
-      await _storeDerivedKey(folderPath, secretKey);
+
+      await _storeWrappedDerivedKey(folderPath, wrapped);
     });
+
+    _zeroBytes(Uint8List.fromList(await fastKey.extractBytes()));
   }
 
   static Future<void> createEmptyDbIsolateEntry(List<dynamic> args) async {
@@ -172,13 +198,11 @@ class StorageService {
       final derivedKeyFile = File('$folderPath/$derivedKeyFileName');
 
       if (await derivedKeyFile.exists()) {
-        try {
-          final raw = await derivedKeyFile.readAsBytes();
-          secretKey = SecretKey(raw);
-          final parts = meta['parts'] as int;
-          final bytes = await _readAndConcatParts(folderPath, parts);
-          await cryptoService.decryptUtf8(secretKey, bytes);
-        } catch (_) {
+        final wrapped = await derivedKeyFile.readAsBytes();
+
+        final fastMeta = meta['fast'] as Map<String, dynamic>?;
+
+        if (fastMeta == null) {
           secretKey = await cryptoService.deriveKeyFromPassword(
             password: password,
             salt: salt,
@@ -188,7 +212,23 @@ class StorageService {
             parallelism: parallelism,
           );
           await _storeDerivedKey(folderPath, secretKey);
+        } else {
+          final fastSalt = base64Decode(fastMeta['salt'] as String);
+          final fastKey = await _deriveFastKey(password, fastSalt);
+          try {
+            final keyBytes = await _unwrapKeyWithAesGcm(fastKey, wrapped);
+            secretKey = SecretKey(keyBytes);
+          } catch (e) {
+            throw Exception('Invalid password or corrupted derived key.');
+          } finally {
+            _zeroBytes(Uint8List.fromList(await fastKey.extractBytes()));
+          }
         }
+
+        final parts = meta['parts'] as int;
+        final bytes = await _readAndConcatParts(folderPath, parts);
+        final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
+        return (plaintext: plaintext, key: secretKey);
       } else {
         secretKey = await cryptoService.deriveKeyFromPassword(
           password: password,
@@ -199,13 +239,87 @@ class StorageService {
           parallelism: parallelism,
         );
         await _storeDerivedKey(folderPath, secretKey);
-      }
 
-      final parts = meta['parts'] as int;
-      final bytes = await _readAndConcatParts(folderPath, parts);
-      final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
-      return (plaintext: plaintext, key: secretKey);
+        final parts = meta['parts'] as int;
+        final bytes = await _readAndConcatParts(folderPath, parts);
+        final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
+        return (plaintext: plaintext, key: secretKey);
+      }
     });
+  }
+
+  Future<Uint8List> _makeVerifier(SecretKey key) async {
+    final hmac = Hmac.sha256();
+    final mac = await hmac.calculateMac(
+      utf8.encode(_verifierLabel),
+      secretKey: key,
+    );
+    return Uint8List.fromList(mac.bytes);
+  }
+
+  Future<SecretKey> _deriveFastKey(String password, List<int> salt) async {
+    final secretKey = await _fastKdf.deriveKey(
+      secretKey: SecretKey(utf8.encode(password)),
+      nonce: Uint8List.fromList(salt),
+    );
+    return secretKey;
+  }
+
+  final AesGcm _aesGcm = AesGcm.with256bits();
+
+  Future<Uint8List> _wrapKeyWithAesGcm(
+      SecretKey wrappingKey, List<int> toWrap) async {
+    final nonce = _secureRandomBytes(12);
+    final secretBox = await _aesGcm.encrypt(
+      toWrap,
+      secretKey: wrappingKey,
+      nonce: Uint8List.fromList(nonce),
+    );
+
+    final blob = BytesBuilder();
+    blob.add(nonce);
+    blob.add(secretBox.cipherText);
+    blob.add(secretBox.mac.bytes);
+    return Uint8List.fromList(blob.toBytes());
+  }
+
+  Future<Uint8List> _unwrapKeyWithAesGcm(
+      SecretKey wrappingKey, List<int> blob) async {
+    if (blob.length < 12 + 16) throw Exception('Invalid wrapped blob.');
+    final nonce = blob.sublist(0, 12);
+    // mac is last 32 bytes for HMAC-SHA256? For AES-GCM tag length is 16 bytes; cryptography's Mac length is 16 for GCM
+
+    final macLen = 16;
+    final macStart = blob.length - macLen;
+    final cipherText = blob.sublist(12, macStart);
+    final macBytes = blob.sublist(macStart);
+    final secretBox = SecretBox(
+      Uint8List.fromList(cipherText),
+      nonce: Uint8List.fromList(nonce),
+      mac: Mac(macBytes),
+    );
+    final plain = await _aesGcm.decrypt(secretBox, secretKey: wrappingKey);
+    return Uint8List.fromList(plain);
+  }
+
+  Future<void> _storeWrappedDerivedKey(
+      String folderPath, Uint8List wrapped) async {
+    final f = File('$folderPath/$derivedKeyFileName');
+    await f.writeAsBytes(wrapped, flush: true);
+  }
+
+  Future<void> _updateMetaFastInfo(
+      String folderPath, List<int> fastSalt) async {
+    final metaFile = File('$folderPath/$metaFileName');
+    if (!await metaFile.exists()) return;
+    final meta =
+        jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+    meta['fast'] = {
+      'kdf': 'pbkdf2',
+      'iterations': fastKdfIterations,
+      'salt': base64Encode(fastSalt),
+    };
+    await metaFile.writeAsString(jsonEncode(meta), flush: true);
   }
 
   Future<void> _storeDerivedKey(String folderPath, SecretKey key) async {
@@ -293,5 +407,14 @@ class StorageService {
 
   void _zeroBytes(Uint8List bytes) {
     for (var i = 0; i < bytes.length; i++) bytes[i] = 0;
+  }
+
+  bool _constantTimeEquals(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= (a[i] ^ b[i]);
+    }
+    return diff == 0;
   }
 }
