@@ -30,13 +30,16 @@ jobs:
       - name: Cache Flutter dependencies
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.pub-cache
-            .dart_tool
-          key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          path: ~/.pub-cache
+          key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}-v2
           restore-keys: |
             flutter-${{ runner.os }}-
-
+            
+      - name: Clean Flutter project
+        run: |
+          flutter clean
+          rm -rf build pubspec.lock
+    
       - name: Install dependencies
         run: flutter pub get
 
