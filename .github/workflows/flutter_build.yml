@@ -95,7 +95,7 @@ jobs:
         with:
           name: ubuntu-artifacts
           path: |
-            dist/android/app-release.apk
+            dist/android/qsafevault.apk
             qsafevault-web.zip
             qsafevault-linux.zip
           if-no-files-found: error
@@ -172,7 +172,7 @@ jobs:
             echo "Built automatically by GitHub Actions runner."
             echo ""
             echo "Included platforms (as zips):"
-            echo "- ✅ Android (app-release.apk)"
+            echo "- ✅ Android (qsafevault.apk)"
             echo "- ✅ Web (qsafevault-web.zip)"
             echo "- ✅ Linux (qsafevault-linux.zip)"
             echo "- ✅ Windows (qsafevault-windows.zip)"
@@ -188,7 +188,7 @@ jobs:
           body: ${{ env.RELEASE_BODY }}
           token: ${{ secrets.ORIGIN_PAT }}
           files: |
-            release-dist/dist/android/app-release.apk
+            release-dist/android/qsafevault.apk
             release-dist/qsafevault-web.zip
             release-dist/qsafevault-linux.zip
             release-dist/qsafevault-windows.zip
