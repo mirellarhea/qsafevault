@@ -1,4 +1,4 @@
-package dev.qsafevault.pw_manager
+package dev.qsafevault.qsafevault
 
 import io.flutter.embedding.android.FlutterActivity
 
