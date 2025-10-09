@@ -54,9 +54,6 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          
-      - name: Rename APK
-        run: mv dist/android/app-release.apk dist/android/qsafevault.apk
         
       - name: Build Web
         run: flutter build web --release
@@ -78,7 +75,10 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk dist/android/
           cp -r build/web/* dist/web/
           cp -r build/linux/x64/release/bundle/* dist/linux/
-
+          
+      - name: Rename APK
+        run: mv dist/android/app-release.apk dist/android/qsafevault.apk
+        
       - name: Package Ubuntu artifacts
         run: |
           cd dist
