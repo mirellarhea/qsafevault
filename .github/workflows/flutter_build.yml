@@ -54,7 +54,10 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-
+          
+      - name: Rename APK
+        run: mv dist/android/app-release.apk dist/android/qsafevault.apk
+        
       - name: Build Web
         run: flutter build web --release
         
@@ -79,20 +82,21 @@ jobs:
       - name: Package Ubuntu artifacts
         run: |
           cd dist
-          zip -r ../qsafevault-android.zip android
           zip -r ../qsafevault-web.zip web
           zip -r ../qsafevault-linux.zip linux
           cd ..
+
 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ubuntu-artifacts
           path: |
-            qsafevault-android.zip
+            dist/android/app-release.apk
             qsafevault-web.zip
             qsafevault-linux.zip
           if-no-files-found: error
+
 
   build-windows:
     name: Build Windows EXE
@@ -165,7 +169,7 @@ jobs:
             echo "Built automatically by GitHub Actions runner."
             echo ""
             echo "Included platforms (as zips):"
-            echo "- ✅ Android (.apk in qsafevault-android.zip)"
+            echo "- ✅ Android (app-release.apk)"
             echo "- ✅ Web (qsafevault-web.zip)"
             echo "- ✅ Linux (qsafevault-linux.zip)"
             echo "- ✅ Windows (qsafevault-windows.zip)"
@@ -181,8 +185,9 @@ jobs:
           body: ${{ env.RELEASE_BODY }}
           token: ${{ secrets.ORIGIN_PAT }}
           files: |
-            release-dist/qsafevault-android.zip
+            release-dist/dist/android/app-release.apk
             release-dist/qsafevault-web.zip
             release-dist/qsafevault-linux.zip
             release-dist/qsafevault-windows.zip
+
           overwrite_files: true
