@@ -1,20 +1,13 @@
 name: qsafevault
-description: Simple cross-platform Flutter password manager example
+description: cross-platform password manager
 publish_to: "none"
+
 environment:
   sdk: ">=3.0.0 <4.0.0"
-
-dev_dependencies:
-  flutter_test:
-      sdk: flutter
-  test: ^1.22.0
-  flutter_launcher_icons: ^0.14.4
-  flutter_native_splash: ^2.4.6
 
 dependencies:
   flutter:
     sdk: flutter
-
   cupertino_icons: ^1.0.8
   cryptography: ^2.7.0
   file_picker: ^10.3.3
@@ -23,10 +16,20 @@ dependencies:
   bitsdojo_window: ^0.1.6
   uuid: ^4.5.1
 
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  test: ^1.22.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.6
+
 flutter:
   uses-material-design: true
 
-flutter_icons:
+  assets:
+    - public/logo.png
+
+flutter_launcher_icons:
   android: true
   ios: true
   image_path: "public/logo.png"
