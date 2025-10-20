@@ -4,6 +4,10 @@ import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import '/pages/home_page.dart';
 import 'package:cryptography/cryptography.dart';
+import '/services/theme_service.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:crypto/crypto.dart' as crypto; // for SHA1 used in breach check
 
 class LandingPage extends StatefulWidget {
   final StorageService storage;
@@ -20,6 +24,12 @@ class _LandingPageState extends State<LandingPage> {
   bool _busy = false;
   double _progress = 0.0;
   String _status = "";
+
+  @override
+  void initState() {
+    super.initState();
+    ThemeService.instance.init();
+  }
 
   Future<void> _createDbFlow() async {
     try {
@@ -44,18 +54,26 @@ class _LandingPageState extends State<LandingPage> {
       setState(() {
         _busy = true;
         _progress = 0.0;
-        _status = "Creating secure database… (est. ~30s)";
+        _status = "Calibrating…";
       });
 
-      _simulateProgress(duration: const Duration(seconds: 30));
+      // Calibrate slow/fast profiles to target times.
+      final profiles = await widget.storage.calibrateArgon2Profiles();
+
+      setState(() {
+        _status = "Creating secure database… (device-tuned)";
+        _progress = 0.05;
+      });
+
+      _simulateProgress(duration: const Duration(seconds: 20));
 
       final error = await _createEmptyDbWithIsolate(
         folderPath: safeFolder,
         password: password,
-        parts: 10,
-        iterations: 50000,
-        memoryKb: 64,
-        parallelism: 2,
+        parts: 3,
+        iterations: profiles.slow.iterations,
+        memoryKb: profiles.slow.memoryKb,
+        parallelism: profiles.slow.parallelism,
       );
       if (error != null) throw Exception(error);
 
@@ -130,8 +148,11 @@ class _LandingPageState extends State<LandingPage> {
     });
 
     try {
-      final rawFolder = await widget.storage.pickDirectoryWithFallback();
-      final folder = await widget.storage.validateDbFolder(rawFolder);
+      final pickedFolder = await widget.storage.pickVaultFolderForOpen();
+      if (pickedFolder == null) {
+        return;
+      }
+      final folder = await widget.storage.validateDbFolder(pickedFolder);
 
       final password = await _askForPassword(confirm: false);
       if (password == null) return;
@@ -222,49 +243,145 @@ class _LandingPageState extends State<LandingPage> {
     final passwordCtl = TextEditingController();
     final password2Ctl = TextEditingController();
     final formKey = GlobalKey<FormState>();
+    double strength = 0.0;
+    String strengthLabel = 'Weak';
+    String? breachWarning;
+
+    bool isCommon(String p) {
+      final lower = p.toLowerCase();
+      const commons = [
+        'password',
+        '123456',
+        'qwerty',
+        'letmein',
+        'admin',
+        'welcome'
+      ];
+      if (commons.any(lower.contains)) return true;
+      if (RegExp(r'^(.)\1{5,}$').hasMatch(p)) return true; // repeated chars
+      if (RegExp(r'(1234|abcd|qwer|asdf)').hasMatch(lower)) return true;
+      return false;
+    }
+
+    void recompute(String p) {
+      int score = 0;
+      if (p.length >= 12) score += 2;
+      if (RegExp(r'[a-z]').hasMatch(p)) score++;
+      if (RegExp(r'[A-Z]').hasMatch(p)) score++;
+      if (RegExp(r'\d').hasMatch(p)) score++;
+      if (RegExp(r'[^\w]').hasMatch(p)) score++;
+      if (!isCommon(p)) score++;
+      strength = (score / 8).clamp(0.0, 1.0);
+      if (strength >= 0.8) {
+        strengthLabel = 'Strong';
+      } else if (strength >= 0.6) {
+        strengthLabel = 'Good';
+      } else if (strength >= 0.4) {
+        strengthLabel = 'Fair';
+      } else {
+        strengthLabel = 'Weak';
+      }
+    }
+
+    Future<String?> breachCheck(String p) async {
+      try {
+        if (p.length < 12) return null;
+        final sha1 = crypto.sha1.convert(utf8.encode(p)).toString().toUpperCase();
+        final prefix = sha1.substring(0, 5);
+        final suffix = sha1.substring(5);
+        final resp = await http.get(
+          Uri.parse('https://api.pwnedpasswords.com/range/$prefix'),
+          headers: {'Add-Padding': 'true'},
+        );
+        if (resp.statusCode != 200) return null;
+        final found = resp.body.split('\n').any((line) {
+          final parts = line.split(':');
+          if (parts.length != 2) return false;
+          return parts[0].trim() == suffix;
+        });
+        return found ? 'This password appears in breach corpuses.' : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
     final res = await showDialog<String?>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-            confirm ? 'Create DB - set password' : 'Open DB - enter password'),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: passwordCtl,
-                decoration: const InputDecoration(labelText: 'Password'),
-                obscureText: true,
-                validator: (v) =>
-                    (v == null || v.length < 8) ? 'Password >= 8 chars' : null,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setStateDialog) {
+          return AlertDialog(
+            title: Text(confirm ? 'Create DB - set password' : 'Open DB - enter password'),
+            content: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: passwordCtl,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                    obscureText: true,
+                    onChanged: (v) {
+                      recompute(v);
+                      breachWarning = null;
+                      setStateDialog(() {});
+                    },
+                    validator: (v) {
+                      final p = v ?? '';
+                      if (p.length < 12) return 'Password >= 12 chars';
+                      if (isCommon(p)) return 'Avoid common patterns or repeats';
+                      return null;
+                    },
+                  ),
+                  if (confirm)
+                    TextFormField(
+                      controller: password2Ctl,
+                      decoration: const InputDecoration(labelText: 'Confirm password'),
+                      obscureText: true,
+                      validator: (v) => (v != passwordCtl.text) ? 'Passwords do not match' : null,
+                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: LinearProgressIndicator(value: strength, minHeight: 6),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(strengthLabel),
+                    ],
+                  ),
+                  if (breachWarning != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      breachWarning!,
+                      style: TextStyle(color: Colors.orange.shade700),
+                    ),
+                  ]
+                ],
               ),
-              if (confirm)
-                TextFormField(
-                  controller: password2Ctl,
-                  decoration:
-                      const InputDecoration(labelText: 'Confirm password'),
-                  obscureText: true,
-                  validator: (v) =>
-                      (v != passwordCtl.text) ? 'Passwords do not match' : null,
-                ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(null),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: () async {
+                  if (formKey.currentState?.validate() ?? false) {
+                    final warn = await breachCheck(passwordCtl.text);
+                    if (warn != null) {
+                      // Show advisory and do not proceed automatically.
+                      breachWarning = warn;
+                      setStateDialog(() {});
+                      return;
+                    }
+                    Navigator.of(context).pop(passwordCtl.text);
+                  }
+                },
+                child: const Text('OK'),
+              )
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState?.validate() ?? false) {
-                Navigator.of(context).pop(passwordCtl.text);
-              }
-            },
-            child: const Text('OK'),
-          )
-        ],
-      ),
+          );
+        });
+      },
     );
     return res;
   }
@@ -309,7 +426,25 @@ class _LandingPageState extends State<LandingPage> {
         return true;
       },
       child: Scaffold(
-        appBar: AppBar(title: const Text('Q-Safe Vault')),
+        appBar: AppBar(
+          title: const Text('Q-Safe Vault'),
+          actions: [
+            IconButton(
+              tooltip: 'Toggle light/dark',
+              icon: const Icon(Icons.brightness_6),
+              onPressed: () => ThemeService.instance.toggleLightDark(),
+            ),
+            PopupMenuButton<AppThemeMode>(
+              tooltip: 'Theme',
+              onSelected: (m) => ThemeService.instance.setMode(m),
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(value: AppThemeMode.system, child: Text('System')),
+                PopupMenuItem(value: AppThemeMode.light, child: Text('Light')),
+                PopupMenuItem(value: AppThemeMode.dark, child: Text('Dark')),
+              ],
+            ),
+          ],
+        ),
         body: Center(
           child: _busy
               ? Column(

@@ -259,13 +259,23 @@ class _HomePageState extends State<HomePage> {
             hintText: 'Search...',
             border: InputBorder.none,
           ),
-          style: const TextStyle(
-            color: Colors.black,
-          ),
-          cursorColor: Colors.black,
           onChanged: (val) => setState(() => _searchQuery = val),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Toggle light/dark',
+            icon: const Icon(Icons.brightness_6),
+            onPressed: () => ThemeService.instance.toggleLightDark(),
+          ),
+          PopupMenuButton<AppThemeMode>(
+            tooltip: 'Theme',
+            onSelected: (m) => ThemeService.instance.setMode(m),
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(value: AppThemeMode.system, child: Text('System')),
+              PopupMenuItem(value: AppThemeMode.light, child: Text('Light')),
+              PopupMenuItem(value: AppThemeMode.dark, child: Text('Dark')),
+            ],
+          ),
           IconButton(onPressed: _addEntry, icon: const Icon(Icons.add)),
           IconButton(
             onPressed: _saveToDisk,

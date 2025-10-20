@@ -15,7 +15,7 @@ class CryptoService {
     required List<int> salt,
     String kdf = 'pbkdf2',
     int iterations = 20000,
-    int memoryKb = 64, //return to 512 next time
+    int memoryKb = 64,
     int parallelism = 2,
   }) async {
     if (kdf.toLowerCase() == 'argon2id') {

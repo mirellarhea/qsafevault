@@ -20,7 +20,8 @@ void main() {
 
   setUp(() async {
     cryptoService = CryptoService();
-    storage = StorageService(cryptoService);
+    // Important: disable secure storage for deterministic file-based tests.
+    storage = StorageService(cryptoService, useSecureStorage: false);
     tempDir = await Directory.systemTemp.createTemp('storage_test_');
   });
 
@@ -135,6 +136,34 @@ void main() {
       if (!await backupFile.exists()) allBackupsExist = false;
     }
     expect(allBackupsExist, true);
+  });
+
+  test('Cleanup backups removes .bak files', () async {
+    final folderPath = await storage.ensureEmptyOrPwdbSubdir(tempDir.path);
+    final password = 'cleanupBackupsPass';
+
+    await storage.createEmptyDb(folderPath: folderPath, password: password);
+    final db = await storage.openDb(folderPath: folderPath, password: password);
+
+    await storage.saveDb(
+        folderPath: folderPath, key: db.key, jsonDb: jsonEncode([]));
+
+    // Ensure at least one .bak exists
+    final bakGlob = Directory(folderPath)
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith(StorageService.backupSuffix))
+        .toList();
+    expect(bakGlob.isNotEmpty, true);
+
+    await storage.cleanupBackups(folderPath);
+
+    final remainingBak = Directory(folderPath)
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith(StorageService.backupSuffix))
+        .toList();
+    expect(remainingBak.isEmpty, true);
   });
 
   test('Reading non-existent DB folder throws', () async {

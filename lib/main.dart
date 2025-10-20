@@ -5,15 +5,12 @@ import '/services/storage_service.dart';
 import 'platforms/windows.dart';
 import 'dart:io';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  await ThemeService.instance.init();
   final cryptoService = CryptoService();
   final storageService = StorageService(cryptoService);
-
-  //windows specific setup
   setupWindowsWindow();
-
   runApp(MyApp(storage: storageService, cryptoService: cryptoService));
 }
 
@@ -29,16 +26,30 @@ class MyApp extends StatelessWidget {
     if (Platform.isWindows) {
       page = wrapWithWindowsBorder(page);
     }
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Q-Safe Vault',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: LandingPage(storage: storage, cryptoService: cryptoService),
-      builder: (context, child) {
-        if (Platform.isWindows && child != null) {
-          return wrapWithWindowsBorder(child);
-        }
-        return child!;
+    return StreamBuilder<AppThemeMode>(
+      stream: ThemeService.instance.stream,
+      initialData: ThemeService.instance.mode,
+      builder: (context, snapshot) {
+        final m = snapshot.data ?? AppThemeMode.system;
+        final themeMode = switch (m) {
+          AppThemeMode.light => ThemeMode.light,
+          AppThemeMode.dark => ThemeMode.dark,
+          _ => ThemeMode.system,
+        };
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Q-Safe Vault',
+          theme: ThemeData.light(),
+          darkTheme: ThemeData.dark(),
+          themeMode: themeMode,
+          home: LandingPage(storage: storage, cryptoService: cryptoService),
+          builder: (context, child) {
+            if (Platform.isWindows && child != null) {
+              return wrapWithWindowsBorder(child);
+            }
+            return child!;
+          },
+        );
       },
     );
   }
