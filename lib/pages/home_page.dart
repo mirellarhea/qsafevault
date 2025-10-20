@@ -5,6 +5,7 @@ import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import 'package:cryptography/cryptography.dart';
 import '/widgets/entry_form.dart';
+import 'package:qsafevault/services/theme_service.dart';
 
 class HomePage extends StatefulWidget {
   final StorageService storage;
@@ -77,7 +78,18 @@ class _HomePageState extends State<HomePage> {
       builder: (_) => EntryForm(
         onSave: (entry) {
           setState(() => _entries.add(entry));
+          _saveToDisk();
         },
+      ),
+    );
+  }
+
+  void _remindSave() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Remember to tap Save (top-right) to persist changes'),
+        action: SnackBarAction(label: 'Save', onPressed: _saveToDisk),
+        duration: const Duration(seconds: 4),
       ),
     );
   }
@@ -92,6 +104,7 @@ class _HomePageState extends State<HomePage> {
             final idx = _entries.indexWhere((x) => x.id == entry.id);
             if (idx >= 0) _entries[idx] = entry;
           });
+          _remindSave();
         },
       ),
     );
@@ -110,6 +123,7 @@ class _HomePageState extends State<HomePage> {
           ElevatedButton(
             onPressed: () {
               setState(() => _entries.removeWhere((x) => x.id == e.id));
+              _remindSave();
               Navigator.of(context).pop();
             },
             child: const Text('Delete'),
@@ -266,15 +280,6 @@ class _HomePageState extends State<HomePage> {
             tooltip: 'Toggle light/dark',
             icon: const Icon(Icons.brightness_6),
             onPressed: () => ThemeService.instance.toggleLightDark(),
-          ),
-          PopupMenuButton<AppThemeMode>(
-            tooltip: 'Theme',
-            onSelected: (m) => ThemeService.instance.setMode(m),
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(value: AppThemeMode.system, child: Text('System')),
-              PopupMenuItem(value: AppThemeMode.light, child: Text('Light')),
-              PopupMenuItem(value: AppThemeMode.dark, child: Text('Dark')),
-            ],
           ),
           IconButton(onPressed: _addEntry, icon: const Icon(Icons.add)),
           IconButton(

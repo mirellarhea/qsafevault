@@ -20,8 +20,7 @@ void main() {
 
   setUp(() async {
     cryptoService = CryptoService();
-    // Important: disable secure storage for deterministic file-based tests.
-    storage = StorageService(cryptoService, useSecureStorage: false);
+    storage = StorageService(cryptoService);
     tempDir = await Directory.systemTemp.createTemp('storage_test_');
   });
 
@@ -138,34 +137,6 @@ void main() {
     expect(allBackupsExist, true);
   });
 
-  test('Cleanup backups removes .bak files', () async {
-    final folderPath = await storage.ensureEmptyOrPwdbSubdir(tempDir.path);
-    final password = 'cleanupBackupsPass';
-
-    await storage.createEmptyDb(folderPath: folderPath, password: password);
-    final db = await storage.openDb(folderPath: folderPath, password: password);
-
-    await storage.saveDb(
-        folderPath: folderPath, key: db.key, jsonDb: jsonEncode([]));
-
-    // Ensure at least one .bak exists
-    final bakGlob = Directory(folderPath)
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith(StorageService.backupSuffix))
-        .toList();
-    expect(bakGlob.isNotEmpty, true);
-
-    await storage.cleanupBackups(folderPath);
-
-    final remainingBak = Directory(folderPath)
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith(StorageService.backupSuffix))
-        .toList();
-    expect(remainingBak.isEmpty, true);
-  });
-
   test('Reading non-existent DB folder throws', () async {
     final invalidFolder = Directory('${tempDir.path}/invalid');
     expect(() async => await storage.validateDbFolder(invalidFolder.path),
@@ -206,8 +177,39 @@ void main() {
 
     final receivePort = ReceivePort();
     await Isolate.spawn(StorageService.createEmptyDbIsolateEntry,
-        [receivePort.sendPort, folderPath, password, 5, 16, 1, 1, 1]);
+        [receivePort.sendPort, folderPath, password, 5, 16, 1, 1]);
     final result = await receivePort.first;
     expect(result, null);
+  });
+
+  test('Backup cleanup reduces old .bak files', () async {
+    final folderPath = await storage.ensureEmptyOrPwdbSubdir(tempDir.path);
+    final password = 'cleanupTest';
+    await storage.createEmptyDb(folderPath: folderPath, password: password);
+    final opened = await storage.openDb(folderPath: folderPath, password: password);
+
+    // Make multiple saves to generate backups
+    for (var i = 0; i < 5; i++) {
+      final newContent = jsonEncode([
+        {'i': i}
+      ]);
+      await storage.saveDb(folderPath: folderPath, key: opened.key, jsonDb: newContent);
+    }
+
+    final metaFile = File(path.join(folderPath, StorageService.metaFileName));
+    final meta = jsonDecode(await metaFile.readAsString());
+    final parts = meta['parts'] as int;
+
+    // Count backups per part should be small after cleanup
+    int totalBackups = 0;
+    for (var i = 0; i < parts; i++) {
+      final pattern = '${StorageService.baseEncryptedName}.part${i + 1}${StorageService.backupSuffix}';
+      final matches = Directory(folderPath)
+          .listSync()
+          .where((e) => e is File && e.path.endsWith(StorageService.backupSuffix) && e.path.contains(pattern))
+          .length;
+      totalBackups += matches;
+    }
+    expect(totalBackups, lessThanOrEqualTo(parts * 2));
   });
 }

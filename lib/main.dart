@@ -4,6 +4,7 @@ import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import 'platforms/windows.dart';
 import 'dart:io';
+import 'package:qsafevault/services/theme_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,7 +32,7 @@ class MyApp extends StatelessWidget {
       initialData: ThemeService.instance.mode,
       builder: (context, snapshot) {
         final m = snapshot.data ?? AppThemeMode.system;
-        final themeMode = switch (m) {
+        final mode = switch (m) {
           AppThemeMode.light => ThemeMode.light,
           AppThemeMode.dark => ThemeMode.dark,
           _ => ThemeMode.system,
@@ -41,7 +42,7 @@ class MyApp extends StatelessWidget {
           title: 'Q-Safe Vault',
           theme: ThemeData.light(),
           darkTheme: ThemeData.dark(),
-          themeMode: themeMode,
+          themeMode: mode,
           home: LandingPage(storage: storage, cryptoService: cryptoService),
           builder: (context, child) {
             if (Platform.isWindows && child != null) {

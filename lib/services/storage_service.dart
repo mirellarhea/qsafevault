@@ -8,17 +8,14 @@ import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:synchronized/synchronized.dart';
-import 'crypto_service.dart';
 import 'package:pointycastle/export.dart' as pc;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:qsafevault/services/secure_storage.dart';
+import 'crypto_service.dart';
 
 class StorageService {
   final CryptoService cryptoService;
-  StorageService(
-    this.cryptoService, {
-    this.useSecureStorage = true,
-    FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = useSecureStorage ? (secureStorage ?? const FlutterSecureStorage()) : null;
+  StorageService(this.cryptoService);
 
   static const metaFileName = 'pwdb.meta.json';
   static const baseEncryptedName = 'pwdb.enc';
@@ -26,11 +23,10 @@ class StorageService {
   static const derivedKeyFileName = 'derived.key';
   static const _verifierLabel = 'q-safe-verifier';
   static const _keyWrapLabel = 'qsv-keywrap-v1';
-  static const _fastSigLabel = 'qsv-fastparams-v1';
+  static const _fastSigLabel = 'qsv-fastparams-sig-v1'; 
 
   final _lock = Lock();
 
-  
   static const int fastKdfSaltLen = 32;
   static const int fastMemoryKb = 131072;
   static const int fastIterations = 1;
@@ -40,8 +36,14 @@ class StorageService {
   static const int slowKdfMemoryKb = 262144;
   static const int slowKdfParallelism = 2;
 
-  final FlutterSecureStorage? _secureStorage;
-  final bool useSecureStorage;
+  
+  static const int slowTargetMs = 400; 
+  static const int fastTargetMs = 120; 
+  static const int minIterations = 1;
+  static const int minMemoryKb = 16384; 
+  static const int minParallelism = 1;
+
+  final SecureStorage _osSecure = SecureStorage();
 
   Future<String> pickDirectoryWithFallback() async {
     try {
@@ -54,8 +56,6 @@ class StorageService {
     return dir.path;
   }
 
-  
-  
   Future<String?> pickVaultFolderForOpen() async {
     try {
       final res = await FilePicker.platform.pickFiles(
@@ -73,7 +73,7 @@ class StorageService {
       }
 
       final folder = Directory(path).parent.path;
-      
+
       if (!await File('$folder/$metaFileName').exists()) {
         throw Exception('Selected file is not a valid vault metadata file.');
       }
@@ -127,21 +127,26 @@ class StorageService {
     required String folderPath,
     required String password,
     int parts = 3,
+    
     int memoryKb = slowKdfMemoryKb,
     int iterations = slowKdfIterations,
     int parallelism = slowKdfParallelism,
   }) async {
     if (password.isEmpty) throw ArgumentError('Password cannot be empty.');
-    if (password.length < 12) {
-      throw ArgumentError('Password must be at least 12 characters.');
-    }
     if (parts <= 0) throw ArgumentError('Parts must be > 0');
 
     folderPath = await ensureEmptyOrPwdbSubdir(folderPath);
 
+    
+    if (memoryKb <= 0 || iterations <= 0) {
+      final tuned = await _calibrateArgon2(targetMs: slowTargetMs);
+      memoryKb = max(tuned.memoryKb, minMemoryKb);
+      iterations = max(tuned.iterations, minIterations);
+      parallelism = max(tuned.parallelism, minParallelism);
+    }
+
     final salt = _secureRandomBytes(cryptoService.saltLength);
 
-    // Strong/master key (slow profile).
     final strongKey = await cryptoService.deriveKeyFromPassword(
       password: password,
       salt: salt,
@@ -155,32 +160,35 @@ class StorageService {
     final encrypted = await cryptoService.encryptUtf8(strongKey, initialJson);
     _zeroBytes(Uint8List.fromList(utf8.encode(initialJson)));
 
-    // Fast unlock: derive fastKey and wrap master key.
     final fastSalt = _secureRandomBytes(fastKdfSaltLen);
+
+    
+    final fastTuned = await _calibrateArgon2(targetMs: fastTargetMs);
+    final fIterations = max(fastTuned.iterations, minIterations);
+    final fMemoryKb = max(fastTuned.memoryKb, minMemoryKb);
+    final fParallelism = max(fastTuned.parallelism, minParallelism);
+
     final fastKey = await _deriveFastKeyArgon2(
       password,
       fastSalt,
-      memoryKb: fastMemoryKb,
-      iterations: fastIterations,
-      parallelism: fastParallelism,
+      memoryKb: fMemoryKb,
+      iterations: fIterations,
+      parallelism: fParallelism,
     );
     final wrapped =
         await _wrapKeyWithAesGcm(fastKey, await strongKey.extractBytes());
 
-    // Verifier for master key.
     final verifier = await _makeVerifier(strongKey);
 
-    // Prepare meta with fast section in canonical key order (for HMAC).
-    final fastMeta = <String, dynamic>{
+    
+    final fastMeta = {
       'kdf': 'argon2id',
-      'iterations': fastIterations,
-      'memoryKb': fastMemoryKb,
-      'parallelism': fastParallelism,
+      'iterations': fIterations,
+      'memoryKb': fMemoryKb,
+      'parallelism': fParallelism,
       'salt': base64Encode(fastSalt),
     };
-
-    // fastSig binds fast params to the master key.
-    final fastSig = await _fastParamsSignature(strongKey, fastMeta);
+    final fastSig = await _signFastParams(strongKey, fastMeta);
 
     await _lock.synchronized(() async {
       await _writePartsAtomic(folderPath, encrypted, parts);
@@ -219,10 +227,10 @@ class StorageService {
     final int memoryKb = args[4];
     final int iterations = args[5];
     final int parallelism = args[6];
-    // args[7] may be present; ignored for backward compatibility.
 
     final cryptoService = CryptoService();
     final storageService = StorageService(cryptoService);
+
     try {
       await storageService.createEmptyDb(
         folderPath: folderPath,
@@ -259,21 +267,25 @@ class StorageService {
 
       SecretKey secretKey;
 
-      // Prefer OS secure storage; fallback to file if unavailable/missing.
-      final wrappedFromSecure = await _readWrappedFromSecureStorage(folderPath);
-      if (wrappedFromSecure != null) {
+      final wrappedFromSecure = await _tryReadWrappedFromSecure(folderPath);
+
+      if (wrappedFromSecure != null || await File('$folderPath/$derivedKeyFileName').exists()) {
+        final wrapped = wrappedFromSecure ??
+            await File('$folderPath/$derivedKeyFileName').readAsBytes();
+
         final fastMeta = meta['fast'] as Map<String, dynamic>?;
         if (fastMeta == null) {
           throw Exception('Missing fast-unlock parameters in metadata.');
         }
+
         final kdfName = fastMeta['kdf'] as String? ?? 'argon2id';
         if (kdfName != 'argon2id') {
           throw Exception('Unsupported fast KDF: $kdfName');
         }
         final fastSalt = base64Decode(fastMeta['salt'] as String);
-        final fIterations = fastMeta['iterations'] as int? ?? fastIterations;
-        final fMemoryKb = fastMeta['memoryKb'] as int? ?? fastMemoryKb;
-        final fParallelism = fastMeta['parallelism'] as int? ?? fastParallelism;
+        final fIterations = (fastMeta['iterations'] as int?) ?? fastIterations;
+        final fMemoryKb = (fastMeta['memoryKb'] as int?) ?? fastMemoryKb;
+        final fParallelism = (fastMeta['parallelism'] as int?) ?? fastParallelism;
 
         final fastKey = await _deriveFastKeyArgon2(
           password,
@@ -282,59 +294,7 @@ class StorageService {
           iterations: fIterations,
           parallelism: fParallelism,
         );
-        try {
-          final keyBytes = await _unwrapKeyWithAesGcm(fastKey, wrappedFromSecure);
-          secretKey = SecretKey(keyBytes);
-        } catch (_) {
-          throw Exception('Invalid password or corrupted derived key.');
-        } finally {
-          _zeroBytes(Uint8List.fromList(await fastKey.extractBytes()));
-        }
 
-        // Verify fast params signature bound to master key.
-        await _verifyFastParamsSignature(secretKey, meta);
-
-        // Verify master key with verifier.
-        final storedVerifierB64 = meta['verifier'] as String?;
-        if (storedVerifierB64 == null) {
-          throw Exception('Missing verifier.');
-        }
-        final storedVerifier = base64Decode(storedVerifierB64);
-        final candidate = await _makeVerifier(secretKey);
-        final ok = _constantTimeEquals(candidate, storedVerifier);
-        _zeroBytes(candidate);
-        if (!ok) throw Exception('Invalid password.');
-
-        final parts = meta['parts'] as int;
-        final bytes = await _readAndConcatParts(folderPath, parts);
-        final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
-        return (plaintext: plaintext, key: secretKey);
-      }
-
-      // Fallback file path (legacy / no secure storage).
-      final derivedKeyFile = File('$folderPath/$derivedKeyFileName');
-      if (await derivedKeyFile.exists()) {
-        final wrapped = await derivedKeyFile.readAsBytes();
-        final fastMeta = meta['fast'] as Map<String, dynamic>?;
-        if (fastMeta == null) {
-          throw Exception('Missing fast-unlock parameters in metadata.');
-        }
-        final kdfName = fastMeta['kdf'] as String? ?? 'argon2id';
-        if (kdfName != 'argon2id') {
-          throw Exception('Unsupported fast KDF: $kdfName');
-        }
-        final fastSalt = base64Decode(fastMeta['salt'] as String);
-        final fIterations = fastMeta['iterations'] as int? ?? fastIterations;
-        final fMemoryKb = fastMeta['memoryKb'] as int? ?? fastMemoryKb;
-        final fParallelism = fastMeta['parallelism'] as int? ?? fastParallelism;
-
-        final fastKey = await _deriveFastKeyArgon2(
-          password,
-          fastSalt,
-          memoryKb: fMemoryKb,
-          iterations: fIterations,
-          parallelism: fParallelism,
-        );
         try {
           final keyBytes = await _unwrapKeyWithAesGcm(fastKey, wrapped);
           secretKey = SecretKey(keyBytes);
@@ -344,24 +304,31 @@ class StorageService {
           _zeroBytes(Uint8List.fromList(await fastKey.extractBytes()));
         }
 
-        await _verifyFastParamsSignature(secretKey, meta);
-
+        
         final storedVerifierB64 = meta['verifier'] as String?;
-        if (storedVerifierB64 == null) {
-          throw Exception('Missing verifier.');
-        }
+        if (storedVerifierB64 == null) throw Exception('Missing verifier.');
         final storedVerifier = base64Decode(storedVerifierB64);
         final candidate = await _makeVerifier(secretKey);
         final ok = _constantTimeEquals(candidate, storedVerifier);
         _zeroBytes(candidate);
         if (!ok) throw Exception('Invalid password.');
 
-        final parts = meta['parts'] as int;
-        final bytes = await _readAndConcatParts(folderPath, parts);
+        
+        final fastSigB64 = meta['fastSig'] as String?;
+        if (fastSigB64 != null) {
+          final sig = base64Decode(fastSigB64);
+          final expectSig = await _signFastParams(secretKey, fastMeta);
+          final sigOk = _constantTimeEquals(sig, expectSig);
+          if (!sigOk) {
+            throw Exception('Fast KDF parameters tampered.');
+          }
+        }
+
+        final partsCount = meta['parts'] as int;
+        final bytes = await _readAndConcatParts(folderPath, partsCount);
         final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
         return (plaintext: plaintext, key: secretKey);
       } else {
-        // No wrapped key available; derive the slow way.
         secretKey = await cryptoService.deriveKeyFromPassword(
           password: password,
           salt: salt,
@@ -371,7 +338,6 @@ class StorageService {
           parallelism: parallelism,
         );
 
-        // Verifier
         final storedVerifierB64 = meta['verifier'] as String?;
         if (storedVerifierB64 == null) {
           throw Exception('Missing verifier.');
@@ -382,14 +348,18 @@ class StorageService {
         _zeroBytes(candidate);
         if (!ok) throw Exception('Invalid password.');
 
-        // Immediately create fast path artifacts
+        
         final fastSalt = _secureRandomBytes(fastKdfSaltLen);
+        final tuned = await _calibrateArgon2(targetMs: fastTargetMs);
+        final fIterations = max(tuned.iterations, minIterations);
+        final fMemoryKb = max(tuned.memoryKb, minMemoryKb);
+        final fParallelism = max(tuned.parallelism, minParallelism);
         final fastKey = await _deriveFastKeyArgon2(
           password,
           fastSalt,
-          memoryKb: fastMemoryKb,
-          iterations: fastIterations,
-          parallelism: fastParallelism,
+          memoryKb: fMemoryKb,
+          iterations: fIterations,
+          parallelism: fParallelism,
         );
         final wrapped =
             await _wrapKeyWithAesGcm(fastKey, await secretKey.extractBytes());
@@ -397,21 +367,77 @@ class StorageService {
         await _updateMetaFastInfo(
           folderPath,
           fastSalt,
-          memoryKb: fastMemoryKb,
-          iterations: fastIterations,
-          parallelism: fastParallelism,
-          strongKey: secretKey,
+          memoryKb: fMemoryKb,
+          iterations: fIterations,
+          parallelism: fParallelism,
+          masterKey: secretKey,
         );
         _zeroBytes(Uint8List.fromList(await fastKey.extractBytes()));
 
-        final parts = meta['parts'] as int;
-        final bytes = await _readAndConcatParts(folderPath, parts);
+        final partsCount = meta['parts'] as int;
+        final bytes = await _readAndConcatParts(folderPath, partsCount);
         final plaintext = await cryptoService.decryptUtf8(secretKey, bytes);
         return (plaintext: plaintext, key: secretKey);
       }
     });
   }
 
+  
+  Future<Uint8List> _signFastParams(SecretKey masterKey, Map<String, dynamic> fastMeta) async {
+    final keyBytes = Uint8List.fromList(await masterKey.extractBytes());
+    final mac = pc.HMac(pc.SHA3Digest(512), 128);
+    mac.init(pc.KeyParameter(keyBytes));
+    final canonical = _canonicalFastParamsString(fastMeta);
+    final data = Uint8List.fromList(utf8.encode('$_fastSigLabel|$canonical'));
+    mac.update(data, 0, data.length);
+    final out = Uint8List(mac.macSize);
+    mac.doFinal(out, 0);
+    return out;
+  }
+
+  String _canonicalFastParamsString(Map<String, dynamic> m) {
+    final kdf = (m['kdf'] as String?) ?? 'argon2id';
+    final iterations = (m['iterations'] as int?) ?? 0;
+    final memoryKb = (m['memoryKb'] as int?) ?? 0;
+    final parallelism = (m['parallelism'] as int?) ?? 0;
+    final salt = (m['salt'] as String?) ?? '';
+    return 'k=$kdf;i=$iterations;m=$memoryKb;p=$parallelism;s=$salt';
+  }
+
+  Future<({int memoryKb, int iterations, int parallelism})> _calibrateArgon2({
+    required int targetMs,
+  }) async {
+    
+    final testSalt = _secureRandomBytes(cryptoService.saltLength);
+    const testPassword = 'qsv-calibration';
+    int iterations = max(minIterations, 1);
+    int memoryKb = max(minMemoryKb, slowKdfMemoryKb ~/ 2);
+    int parallelism = minParallelism;
+
+    Duration took;
+    do {
+      final sw = Stopwatch()..start();
+      await cryptoService.deriveKeyFromPassword(
+        password: testPassword,
+        salt: testSalt,
+        kdf: 'argon2id',
+        iterations: iterations,
+        memoryKb: memoryKb,
+        parallelism: parallelism,
+      );
+      sw.stop();
+      took = sw.elapsed;
+      if (took.inMilliseconds < targetMs) {
+        iterations = (iterations * 2).clamp(minIterations, 1 << 24);
+        if (iterations > 8 && took.inMilliseconds < targetMs / 4) {
+          memoryKb = (memoryKb * 2).clamp(minMemoryKb, slowKdfMemoryKb);
+        }
+      }
+    } while (took.inMilliseconds < targetMs && iterations < (1 << 20));
+    return (memoryKb: memoryKb, iterations: iterations, parallelism: parallelism);
+  }
+
+  
   Future<Uint8List> _makeVerifier(SecretKey key) async {
     final keyBytes = Uint8List.fromList(await key.extractBytes());
     final mac = pc.HMac(pc.SHA3Digest(512), 72);
@@ -446,7 +472,7 @@ class StorageService {
   Future<Uint8List> _wrapKeyWithAesGcm(
       SecretKey wrappingKey, List<int> toWrap) async {
     final nonce = _secureRandomBytes(12);
-    
+
     final labelBytes = utf8.encode(_keyWrapLabel);
     final msg = Uint8List(labelBytes.length + toWrap.length)
       ..setRange(0, labelBytes.length, labelBytes)
@@ -480,7 +506,6 @@ class StorageService {
     );
     final plain = await _aesGcm.decrypt(secretBox, secretKey: wrappingKey);
 
-    
     final labelBytes = utf8.encode(_keyWrapLabel);
     if (plain.length <= labelBytes.length) {
       throw Exception('Wrapped key payload too short.');
@@ -491,21 +516,50 @@ class StorageService {
       }
     }
     final keyBytes = Uint8List.fromList(plain.sublist(labelBytes.length));
-    
+
     _zeroBytes(plain);
     return keyBytes;
   }
 
-  Future<void> _storeWrappedDerivedKey(
-      String folderPath, Uint8List wrapped) async {
-    // Try secure storage first.
-    final ok = await _writeWrappedToSecureStorage(folderPath, wrapped);
-    if (ok) return;
-
-    // Fallback to file with restricted permissions.
+  Future<void> _storeWrappedDerivedKey(String folderPath, Uint8List wrapped) async {
+    final keyId = _keyIdForFolder(folderPath);
+    if (await _osSecure.isAvailable()) {
+      try {
+        await _osSecure.write(keyId, wrapped);
+        
+        final f = File('$folderPath/$derivedKeyFileName');
+        if (await f.exists()) {
+          await f.delete();
+        }
+        return;
+      } catch (_) {
+        
+      }
+    }
     final f = File('$folderPath/$derivedKeyFileName');
     await f.writeAsBytes(wrapped, flush: true);
-    await _restrictFilePermissions(f);
+    
+    if (!Platform.isWindows) {
+      try {
+        await Process.run('chmod', ['600', f.path]);
+      } catch (_) {}
+    }
+  }
+
+  Future<Uint8List?> _tryReadWrappedFromSecure(String folderPath) async {
+    if (await _osSecure.isAvailable()) {
+      try {
+        final v = await _osSecure.read(_keyIdForFolder(folderPath));
+        if (v != null && v.isNotEmpty) return Uint8List.fromList(v);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  String _keyIdForFolder(String folderPath) {
+    final h = crypto.sha256.convert(utf8.encode(folderPath)).bytes;
+    final b64 = base64UrlEncode(h);
+    return 'qsv_wrapped_$b64';
   }
 
   Future<void> _updateMetaFastInfo(
@@ -514,13 +568,13 @@ class StorageService {
     required int memoryKb,
     required int iterations,
     required int parallelism,
-    SecretKey? strongKey,
+    SecretKey? masterKey,
   }) async {
     final metaFile = File('$folderPath/$metaFileName');
     if (!await metaFile.exists()) return;
     final meta =
         jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
-    final fastMeta = <String, dynamic>{
+    final fastMeta = {
       'kdf': 'argon2id',
       'iterations': iterations,
       'memoryKb': memoryKb,
@@ -528,13 +582,10 @@ class StorageService {
       'salt': base64Encode(fastSalt),
     };
     meta['fast'] = fastMeta;
-
-    // If we have the strong key, update the binding signature as well.
-    if (strongKey != null) {
-      final sig = await _fastParamsSignature(strongKey, fastMeta);
+    if (masterKey != null) {
+      final sig = await _signFastParams(masterKey, fastMeta);
       meta['fastSig'] = base64Encode(sig);
     }
-
     await _writeJsonAtomic(metaFile.path, jsonEncode(meta));
   }
 
@@ -560,6 +611,8 @@ class StorageService {
 
       meta['modified'] = DateTime.now().toUtc().toIso8601String();
       await _writeJsonAtomic(metaFile.path, jsonEncode(meta));
+      
+      await _cleanupOldBackups(folderPath, parts, keep: 2);
     });
   }
 
@@ -574,13 +627,20 @@ class StorageService {
     }
   }
 
-  Future<void> cleanupBackups(String folderPath) async {
-    final dir = Directory(folderPath);
-    if (!await dir.exists()) return;
-    await for (final e in dir.list()) {
-      if (e is File && e.path.endsWith(backupSuffix)) {
+  Future<void> _cleanupOldBackups(String folderPath, int parts, {int keep = 2}) async {
+    
+    for (var i = 0; i < parts; i++) {
+      final base = '$folderPath/$baseEncryptedName.part${i + 1}';
+      final dir = Directory(folderPath);
+      final backups = await dir
+          .list()
+          .where((e) => e is File && e.path.startsWith(base) && e.path.endsWith(backupSuffix))
+          .cast<File>()
+          .toList();
+      backups.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      for (var j = keep; j < backups.length; j++) {
         try {
-          await e.delete();
+          await backups[j].delete();
         } catch (_) {}
       }
     }
@@ -588,12 +648,13 @@ class StorageService {
 
   Future<void> deleteDerivedKey(String folderPath) async {
     try {
-      // Prefer secure storage
-      await _deleteWrappedFromSecureStorage(folderPath);
-    } catch (_) {
-      // ignore
-    }
-    try {
+      
+      if (await _osSecure.isAvailable()) {
+        try {
+          await _osSecure.delete(_keyIdForFolder(folderPath));
+        } catch (_) {}
+      }
+      
       final keyFile = File('$folderPath/$derivedKeyFileName');
       if (await keyFile.exists()) {
         await keyFile.delete();
@@ -630,7 +691,6 @@ class StorageService {
     }
   }
 
-  
   Future<void> _writeJsonAtomic(String path, String json) async {
     final tmpPath = '$path.tmp';
     final tmp = File(tmpPath);
@@ -654,157 +714,5 @@ class StorageService {
       diff |= (a[i] ^ b[i]);
     }
     return diff == 0;
-  }
-
-  // ---- Secure storage helpers ----
-
-  Future<bool> _writeWrappedToSecureStorage(String folderPath, Uint8List wrapped) async {
-    if (_secureStorage == null) return false;
-    try {
-      final key = await _wrappedKeyName(folderPath);
-      await _secureStorage!.write(key: key, value: base64Encode(wrapped));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<Uint8List?> _readWrappedFromSecureStorage(String folderPath) async {
-    if (_secureStorage == null) return null;
-    try {
-      final key = await _wrappedKeyName(folderPath);
-      final v = await _secureStorage!.read(key: key);
-      if (v == null) return null;
-      return Uint8List.fromList(base64Decode(v));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> _deleteWrappedFromSecureStorage(String folderPath) async {
-    if (_secureStorage == null) return;
-    try {
-      final key = await _wrappedKeyName(folderPath);
-      await _secureStorage!.delete(key: key);
-    } catch (_) {}
-  }
-
-  Future<String> _wrappedKeyName(String folderPath) async {
-    final hasher = Sha256();
-    final bytes = await hasher.hash(utf8.encode(folderPath));
-    final hex = bytes.bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    return 'qsv_wrapped_$hex';
-  }
-
-  Future<void> _restrictFilePermissions(File f) async {
-    if (Platform.isLinux || Platform.isMacOS) {
-      try {
-        await Process.run('chmod', ['600', f.path]);
-      } catch (_) {}
-    }
-  }
-
-  // ---- Fast params binding ----
-
-  Future<Uint8List> _fastParamsSignature(SecretKey key, Map<String, dynamic> fastMeta) async {
-    // Canonical payload: label || json(fastMeta) with fixed key order.
-    final keyBytes = Uint8List.fromList(await key.extractBytes());
-    final mac = pc.HMac(pc.SHA256Digest(), 64);
-    mac.init(pc.KeyParameter(keyBytes));
-    final payload = <int>[];
-    payload.addAll(utf8.encode(_fastSigLabel));
-    final canonical = jsonEncode({
-      'kdf': fastMeta['kdf'],
-      'iterations': fastMeta['iterations'],
-      'memoryKb': fastMeta['memoryKb'],
-      'parallelism': fastMeta['parallelism'],
-      'salt': fastMeta['salt'],
-    });
-    final data = Uint8List.fromList(utf8.encode(canonical));
-    mac.update(data, 0, data.length);
-    final out = Uint8List(mac.macSize);
-    mac.doFinal(out, 0);
-    return out;
-  }
-
-  Future<void> _verifyFastParamsSignature(SecretKey strongKey, Map<String, dynamic> meta) async {
-    final fastMeta = meta['fast'] as Map<String, dynamic>?;
-    final sigB64 = meta['fastSig'] as String?;
-    if (fastMeta == null || sigB64 == null) {
-      throw Exception('Missing fast parameters or signature.');
-    }
-    final expected = await _fastParamsSignature(strongKey, fastMeta);
-    final actual = base64Decode(sigB64);
-    if (!_constantTimeEquals(expected, actual)) {
-      throw Exception('Fast parameter integrity check failed.');
-    }
-  }
-
-  // ---- Argon2 calibration (best-effort, bounded) ----
-
-  Future<({int memoryKb, int iterations, int parallelism})> calibrateArgon2({
-    int targetMs = 350,
-    int minMemoryKb = 65536,   // 64 MiB
-    int maxMemoryKb = 262144,  // 256 MiB
-    int minIterations = 1,
-    int maxIterations = 6,
-    int parallelism = 2,
-  }) async {
-    // Use fixed memory, scale iterations until ~targetMs (bounded).
-    final salt = _secureRandomBytes(16);
-    final pw = base64Encode(_secureRandomBytes(16));
-
-    int mem = minMemoryKb;
-    int iters = minIterations;
-    Duration last = Duration.zero;
-
-    for (int i = minIterations; i <= maxIterations; i++) {
-      final sw = Stopwatch()..start();
-      await cryptoService.deriveKeyFromPassword(
-        password: pw,
-        salt: salt,
-        kdf: 'argon2id',
-        iterations: i,
-        memoryKb: mem,
-        parallelism: parallelism,
-      );
-      sw.stop();
-      last = sw.elapsed;
-      if (last.inMilliseconds >= targetMs) {
-        iters = i;
-        break;
-      }
-      iters = i;
-    }
-
-    // If way under target, consider increasing memory once (bounded).
-    if (last.inMilliseconds < targetMs ~/ 2 && (mem * 2) <= maxMemoryKb) {
-      mem *= 2;
-    }
-
-    return (memoryKb: mem, iterations: iters, parallelism: parallelism);
-  }
-
-  Future<({
-    ({int memoryKb, int iterations, int parallelism}) slow,
-    ({int memoryKb, int iterations, int parallelism}) fast,
-  })> calibrateArgon2Profiles() async {
-    final slow = await calibrateArgon2(
-      targetMs: 350,
-      minMemoryKb: 65536,
-      maxMemoryKb: 262144,
-      minIterations: 1,
-      maxIterations: 6,
-      parallelism: 2,
-    );
-    final fast = await calibrateArgon2(
-      targetMs: 120,
-      minMemoryKb: 65536,
-      maxMemoryKb: 131072,
-      minIterations: 1,
-      maxIterations: 3,
-      parallelism: 2,
-    );
-    return (slow: slow, fast: fast);
   }
 }
