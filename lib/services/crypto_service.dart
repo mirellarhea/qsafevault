@@ -1,15 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
-
 class CryptoService {
   final AesGcm _aes = AesGcm.with256bits();
   final int _nonceLength = 12;
   final int saltLength = 16;
-
   int get nonceLength => _nonceLength;
   String get cipherName => 'aes-256-gcm';
-
   Future<SecretKey> deriveKeyFromPassword({
     required String password,
     required List<int> salt,
@@ -43,7 +40,6 @@ class CryptoService {
       return secretKey;
     }
   }
-
   Future<Uint8List> encryptUtf8(SecretKey key, String plaintext) async {
     final nonce = _aes.newNonce();
     final secretBox = await _aes.encrypt(
@@ -57,7 +53,6 @@ class CryptoService {
     out.add(secretBox.mac.bytes);
     return Uint8List.fromList(out.toBytes());
   }
-
   Future<String> decryptUtf8(SecretKey key, Uint8List data) async {
     final nonceLen = _nonceLength;
     final macLen = 16;

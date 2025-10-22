@@ -5,7 +5,6 @@ import '/services/storage_service.dart';
 import 'platforms/windows.dart';
 import 'dart:io';
 import 'package:qsafevault/services/theme_service.dart';
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ThemeService.instance.init();
@@ -14,13 +13,11 @@ void main() async {
   setupWindowsWindow();
   runApp(MyApp(storage: storageService, cryptoService: cryptoService));
 }
-
 class MyApp extends StatelessWidget {
   final StorageService storage;
   final CryptoService cryptoService;
   const MyApp({Key? key, required this.storage, required this.cryptoService})
       : super(key: key);
-
   @override
   Widget build(BuildContext context) {
     Widget page = LandingPage(storage: storage, cryptoService: cryptoService);

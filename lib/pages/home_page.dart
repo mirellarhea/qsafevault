@@ -6,14 +6,12 @@ import '/services/storage_service.dart';
 import 'package:cryptography/cryptography.dart';
 import '/widgets/entry_form.dart';
 import 'package:qsafevault/services/theme_service.dart';
-
 class HomePage extends StatefulWidget {
   final StorageService storage;
   final CryptoService cryptoService;
   final String folderPath;
   final SecretKey secretKey;
   final String initialJson;
-
   const HomePage({
     Key? key,
     required this.storage,
@@ -22,16 +20,13 @@ class HomePage extends StatefulWidget {
     required this.secretKey,
     required this.initialJson,
   }) : super(key: key);
-
   @override
   State<HomePage> createState() => _HomePageState();
 }
-
 class _HomePageState extends State<HomePage> {
   late List<PasswordEntry> _entries;
   String _searchQuery = "";
   bool _saving = false;
-
   @override
   void initState() {
     super.initState();
@@ -41,7 +36,6 @@ class _HomePageState extends State<HomePage> {
       _entries = [];
     }
   }
-
   List<PasswordEntry> get _filteredEntries {
     if (_searchQuery.isEmpty) return _entries;
     final q = _searchQuery.toLowerCase();
@@ -52,7 +46,6 @@ class _HomePageState extends State<HomePage> {
           e.password.toLowerCase().contains(q);
     }).toList();
   }
-
   Future<void> _saveToDisk() async {
     setState(() => _saving = true);
     try {
@@ -71,7 +64,6 @@ class _HomePageState extends State<HomePage> {
       setState(() => _saving = false);
     }
   }
-
   void _addEntry() {
     showDialog(
       context: context,
@@ -83,7 +75,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
   void _remindSave() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -93,7 +84,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
   void _editEntry(PasswordEntry e) {
     showDialog(
       context: context,
@@ -109,7 +99,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
   void _deleteEntry(PasswordEntry e) {
     showDialog(
       context: context,
@@ -132,7 +121,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
   void _deleteDerivedKey() {
     showDialog(
       context: context,
@@ -149,7 +137,6 @@ class _HomePageState extends State<HomePage> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
               Navigator.of(context).pop();
-
               try {
                 await widget.storage.deleteDerivedKey(widget.folderPath);
                 if (mounted) {
@@ -172,7 +159,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
   Widget _row(PasswordEntry e) {
     final primary = e.username.isNotEmpty ? e.username : e.email;
     return ListTile(
@@ -240,7 +226,6 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
-
   Widget _copyRow({required String label, required String value}) {
     return Row(
       children: [
@@ -263,7 +248,6 @@ class _HomePageState extends State<HomePage> {
       ],
     );
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

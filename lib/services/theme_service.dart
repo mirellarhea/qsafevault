@@ -1,21 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-
 enum AppThemeMode { system, light, dark }
-
 class ThemeService {
   ThemeService._();
   static final ThemeService instance = ThemeService._();
-
   final _controller = StreamController<AppThemeMode>.broadcast();
   AppThemeMode _mode = AppThemeMode.system;
-
   Future<File> _file() async {
     final dir = await getApplicationSupportDirectory();
     return File('${dir.path}/qsv_theme_mode.txt');
   }
-
   Future<void> init() async {
     try {
       final f = await _file();
@@ -30,10 +25,8 @@ class ThemeService {
     }
     _controller.add(_mode);
   }
-
   AppThemeMode get mode => _mode;
   Stream<AppThemeMode> get stream => _controller.stream;
-
   Future<void> setMode(AppThemeMode mode) async {
     _mode = mode;
     try {
@@ -43,12 +36,10 @@ class ThemeService {
     } catch (_) {}
     _controller.add(_mode);
   }
-
   Future<void> toggleLightDark() async {
     final next = (_mode == AppThemeMode.dark) ? AppThemeMode.light : AppThemeMode.dark;
     await setMode(next);
   }
-
   String _toString(AppThemeMode m) {
     switch (m) {
       case AppThemeMode.system:
@@ -59,7 +50,6 @@ class ThemeService {
         return 'dark';
     }
   }
-
   AppThemeMode? _fromString(String? s) {
     switch (s) {
       case 'system':
@@ -72,7 +62,6 @@ class ThemeService {
         return null;
     }
   }
-
   void dispose() {
     _controller.close();
   }

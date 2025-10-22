@@ -1,25 +1,20 @@
 import 'package:flutter/material.dart';
 import '/models/password_entry.dart';
 import 'package:uuid/uuid.dart';
-
 class EntryForm extends StatefulWidget {
   final PasswordEntry? existing;
   final void Function(PasswordEntry) onSave;
-
   const EntryForm({Key? key, this.existing, required this.onSave})
       : super(key: key);
-
   @override
   State<EntryForm> createState() => _EntryFormState();
 }
-
 class _EntryFormState extends State<EntryForm> {
   final _formKey = GlobalKey<FormState>();
   final _siteCtl = TextEditingController();
   final _userCtl = TextEditingController();
   final _emailCtl = TextEditingController();
   final _passCtl = TextEditingController();
-
   @override
   void initState() {
     super.initState();
@@ -30,7 +25,6 @@ class _EntryFormState extends State<EntryForm> {
       _passCtl.text = widget.existing!.password;
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return AlertDialog(

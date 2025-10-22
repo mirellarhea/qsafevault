@@ -1,10 +1,8 @@
 import 'dart:io';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:flutter/material.dart';
-
 void setupWindowsWindow() {
   if (!Platform.isWindows) return;
-
   doWhenWindowReady(() {
     const initialSize = Size(1000, 700);
     appWindow.minSize = initialSize;
@@ -14,10 +12,8 @@ void setupWindowsWindow() {
     appWindow.show();
   });
 }
-
 Widget wrapWithWindowsBorder(Widget child) {
   if (!Platform.isWindows) return child;
-
   return WindowBorder(
     color: const Color.fromARGB(255, 197, 132, 250),
     width: 0,
@@ -36,7 +32,6 @@ Widget wrapWithWindowsBorder(Widget child) {
     ),
   );
 }
-
 class WindowButtons extends StatelessWidget {
   final buttonColors = WindowButtonColors(
     iconNormal: Colors.white,
@@ -45,14 +40,12 @@ class WindowButtons extends StatelessWidget {
     iconMouseOver: Colors.white,
     iconMouseDown: Colors.white,
   );
-
   final closeButtonColors = WindowButtonColors(
     mouseOver: Colors.red,
     mouseDown: Colors.red[900],
     iconNormal: Colors.white,
     iconMouseOver: Colors.white,
   );
-
   @override
   Widget build(BuildContext context) {
     return Row(
