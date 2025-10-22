@@ -5,7 +5,10 @@ A secure, local-only password manager built with Flutter. Vault data is encrypte
 Supported platforms
 - Windows (supported)
 - Linux (supported)
-- Android (planned)
+- Android (supported)
+
+Downloads
+- Prebuilt releases are available from the repository’s Releases tab (Windows, Linux, Android APK/AAB).
 
 ---
 
@@ -40,7 +43,7 @@ No cloud sync or telemetry is included.
 - Password KDF: Argon2id with runtime calibration to target device cost
 - Optional fast unlock using a wrapped master key in secure storage
 - Atomic writes, multi‑part file storage, backups with pruning
-- Cross‑platform UI (Windows, Linux)
+- Cross‑platform UI (Windows, Linux, Android)
 
 ---
 
@@ -125,6 +128,10 @@ Backup and restore
 - Backups (.bak) are created on each save. To restore, replace pwdb.enc.partN with the corresponding .bak files and keep metadata intact.
 - Keep multiple copies of your vault folder in offline storage for disaster recovery.
 
+Mobile considerations (Android)
+- Consider enabling device lock/biometrics and screen lock to improve protection while the app is running.
+- Clipboard contents are managed by the OS; clear it promptly if copying secrets is necessary.
+
 Known limitations
 - Secure storage availability varies by distro/environment. If unavailable, fast unlock is not used unless disk fallback is explicitly enabled.
 - Clipboard exposure of secrets is inherent to OS clipboards.
@@ -135,18 +142,24 @@ Known limitations
 
 Prerequisites
 - Flutter SDK (stable), Dart SDK (as pinned by Flutter)
-- Platform toolchains (e.g., Visual Studio Desktop C++ for Windows; GTK/Clang for Linux)
+- Platform toolchains:
+  - Windows: Visual Studio with Desktop C++ workload
+  - Linux: GTK/Clang as required by Flutter desktop
+  - Android: Android Studio/SDK, device or emulator
 
 Install deps
 - flutter pub get
 
-Run (desktop)
+Run (desktop/mobile)
 - Windows: flutter run -d windows
 - Linux: flutter run -d linux
+- Android: flutter run -d android
 
 Build release
 - Windows: flutter build windows
 - Linux: flutter build linux
+- Android (APK): flutter build apk --release
+- Android (AAB): flutter build appbundle --release
 
 Quality gates
 - Static analysis: dart analyze
@@ -157,4 +170,42 @@ Quality gates
 
 ## Repository layout
 ```
-/android      # Android (planned)
+/android      # Android
+/ios          # iOS (planned)
+/lib          # Flutter app source
+/linux        # Linux desktop embedding
+/macos        # macOS (planned)
+/public       # Assets
+/test         # Tests
+/web          # Web config (not primary target)
+/windows      # Windows desktop embedding
+pubspec.yaml  # Dependencies and config
+README.md     # This file
+```
+
+---
+
+## Roadmap & status
+- [✅] Core vault storage and desktop/mobile UI
+- [✅] Calibrated Argon2id + AES‑256‑GCM
+- [✅] Optional fast unlock with secure storage and tamper detection
+- [✅] Atomic writes, backups, and file‑part storage
+- [✅] Android support
+- [❌] Cloud sync or multi‑device support
+- [❌] Third‑party security audit
+- [❌] PQ/hybrid cryptography
+
+---
+
+## Responsible disclosure
+Please report security issues privately. Open a GitHub Security Advisory or contact the maintainer via issue for a secure channel. Do not file public issues for vulnerabilities.
+
+---
+
+## License
+Creative Commons Attribution‑NonCommercial 4.0 International (CC BY‑NC 4.0).
+
+---
+
+## Contact
+Open an issue for questions or suggestions. Contributions via PRs and issues are welcome.
