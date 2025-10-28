@@ -26,7 +26,6 @@ class SyncService {
   final _random = Random.secure();
   StreamController<SyncEvent>? _eventController;
   Timer? _timeoutTimer;
-  int _pinAttempts = 0;
   
   /// Current sync status
   SyncStatus status = SyncStatus.idle;
@@ -218,6 +217,9 @@ class SyncService {
     final socket = await _server!.first.timeout(_timeout);
     status = SyncStatus.handshaking;
     
+    // Local PIN attempts counter for this connection
+    int pinAttempts = 0;
+    
     try {
       // Perform ECDH key exchange
       final keyPair = await _generateKeyPair();
@@ -250,30 +252,23 @@ class SyncService {
       final receivedPinHash = base64.decode(clientHello['pin_hash']);
       
       if (!_constantTimeEquals(pinHash, receivedPinHash)) {
-        _pinAttempts++;
-        final attemptsRemaining = _maxPinAttempts - _pinAttempts;
+        pinAttempts++;
+        final attemptsRemaining = _maxPinAttempts - pinAttempts;
         
-        if (_pinAttempts >= _maxPinAttempts) {
-          socket.add(utf8.encode(json.encode({
-            'type': 'error',
-            'message': 'Maximum PIN attempts exceeded. Connection blocked.'
-          })));
-          await socket.flush();
-          await socket.close();
+        if (pinAttempts >= _maxPinAttempts) {
+          await _sendErrorMessage(
+            socket,
+            'Maximum PIN attempts exceeded. Connection blocked.',
+          );
           throw Exception('Maximum PIN attempts exceeded');
         }
         
-        socket.add(utf8.encode(json.encode({
-          'type': 'error',
-          'message': 'Invalid PIN. $attemptsRemaining attempts remaining.'
-        })));
-        await socket.flush();
-        await socket.close();
+        await _sendErrorMessage(
+          socket,
+          'Invalid PIN. $attemptsRemaining attempts remaining.',
+        );
         throw Exception('PIN verification failed');
       }
-      
-      // Reset attempts on success
-      _pinAttempts = 0;
       
       // Send verification OK
       final okMessage = {'type': 'verify_ok'};
@@ -386,6 +381,13 @@ class SyncService {
     return Uint8List.fromList(digest.bytes);
   }
   
+  Future<void> _sendErrorMessage(Socket socket, String message) async {
+    final errorMsg = json.encode({'type': 'error', 'message': message});
+    socket.add(utf8.encode(errorMsg));
+    await socket.flush();
+    await socket.close();
+  }
+  
   bool _constantTimeEquals(List<int> a, List<int> b) {
     if (a.length != b.length) return false;
     int result = 0;
@@ -436,7 +438,6 @@ class SyncService {
     await _eventController?.close();
     _eventController = null;
     
-    _pinAttempts = 0;
     status = SyncStatus.idle;
   }
   
