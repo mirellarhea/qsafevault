@@ -223,11 +223,12 @@ class SyncService {
     try {
       // Perform ECDH key exchange
       final keyPair = await _generateKeyPair();
+      final localPublicKey = await keyPair.extractPublicKey();
       
       // Send server hello with public key
       final serverHello = {
         'type': 'server_hello',
-        'public_key': await _exportPublicKey(keyPair.publicKey),
+        'public_key': await _exportPublicKey(localPublicKey),
       };
       final helloBytes = utf8.encode(json.encode(serverHello));
       socket.add(_lengthPrefix(helloBytes));
@@ -248,7 +249,7 @@ class SyncService {
       final sharedSecret = await _deriveSharedSecret(keyPair, clientPublicKey);
       
       // Verify PIN
-      final pinHash = _hashPin(expectedPin, sharedSecret);
+      final pinHash = await _hashPin(expectedPin, sharedSecret);
       final receivedPinHash = base64.decode(clientHello['pin_hash']);
       
       if (!_constantTimeEquals(pinHash, receivedPinHash)) {
@@ -294,6 +295,7 @@ class SyncService {
     try {
       // Generate ECDH key pair
       final keyPair = await _generateKeyPair();
+      final localPublicKey = await keyPair.extractPublicKey();
       
       // Receive server hello
       final serverHelloBytes = await _readMessage(socket);
@@ -309,10 +311,10 @@ class SyncService {
       final sharedSecret = await _deriveSharedSecret(keyPair, serverPublicKey);
       
       // Send client hello with PIN hash
-      final pinHash = _hashPin(pin, sharedSecret);
+      final pinHash = await _hashPin(pin, sharedSecret);
       final clientHello = {
         'type': 'client_hello',
-        'public_key': await _exportPublicKey(keyPair.publicKey),
+        'public_key': await _exportPublicKey(localPublicKey),
         'pin_hash': base64.encode(pinHash),
       };
       final helloBytes = utf8.encode(json.encode(clientHello));
@@ -373,9 +375,9 @@ class SyncService {
     return sharedSecret;
   }
   
-  Uint8List _hashPin(String pin, SecretKey sharedSecret) {
+  Future<Uint8List> _hashPin(String pin, SecretKey sharedSecret) async {
     final pinBytes = utf8.encode(pin);
-    final keyBytes = sharedSecret.extractSync();
+    final keyBytes = await sharedSecret.extractBytes();
     final hmac = crypto_hash.Hmac(crypto_hash.sha256, keyBytes);
     final digest = hmac.convert(pinBytes);
     return Uint8List.fromList(digest.bytes);
