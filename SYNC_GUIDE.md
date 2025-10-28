@@ -44,6 +44,8 @@ The 6-digit PIN is crucial for security:
 - Used to verify the client is connecting to the right device
 - Prevents man-in-the-middle attacks
 - Only valid for 5 minutes
+- **Limited to 3 attempts** - connection blocked after 3 failed PIN entries
+- Must be exactly 6 digits (all numbers)
 
 ### Troubleshooting
 
@@ -55,8 +57,15 @@ The 6-digit PIN is crucial for security:
 
 #### "Invalid PIN"
 - Double-check you entered the correct PIN
-- The PIN is case-sensitive (all numbers)
-- Try starting the sync process again
+- PIN must be exactly 6 digits
+- You have 3 attempts before the connection is blocked
+- If blocked, restart the sync process on both devices
+
+#### "Maximum PIN attempts exceeded"
+- The connection was blocked after 3 failed PIN entries
+- This is a security feature to prevent brute-force attacks
+- Close the sync dialog on both devices
+- Start a new sync session with the correct PIN
 
 #### "Network error"
 - Check WiFi is enabled on both devices
@@ -77,18 +86,21 @@ The 6-digit PIN is crucial for security:
 - Symmetric Encryption: AES-256-GCM
 - PIN Hashing: HMAC-SHA256
 - Nonce: Randomly generated per encryption
+- Public Key Validation: 32-byte length check
 
 ### Network
 - Protocol: TCP
 - Port: 48923
 - Scope: Local network only
 - Timeout: 5 minutes
+- Rate Limiting: 3 PIN attempts maximum
 
 ### Data Transfer
 - Format: JSON (encrypted)
 - Max size: 100MB
 - Compression: None (already encrypted)
 - Integrity: Verified via AEAD MAC
+- Input Validation: PIN format and length, public key size
 
 ## Privacy Notice
 

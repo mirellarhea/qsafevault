@@ -19,12 +19,14 @@ class SyncService {
   static const int _port = 48923;
   static const Duration _timeout = Duration(minutes: 5);
   static const int _pinLength = 6;
+  static const int _maxPinAttempts = 3;
   
   ServerSocket? _server;
   Socket? _clientSocket;
   final _random = Random.secure();
   StreamController<SyncEvent>? _eventController;
   Timer? _timeoutTimer;
+  int _pinAttempts = 0;
   
   /// Current sync status
   SyncStatus status = SyncStatus.idle;
@@ -72,6 +74,19 @@ class SyncService {
   }) async {
     if (status != SyncStatus.idle) {
       throw StateError('Sync already in progress');
+    }
+    
+    // Validate PIN format
+    if (pin.length != _pinLength) {
+      throw ArgumentError('PIN must be $_pinLength digits');
+    }
+    if (int.tryParse(pin) == null) {
+      throw ArgumentError('PIN must contain only digits');
+    }
+    
+    // Validate address format
+    if (address.isEmpty) {
+      throw ArgumentError('Address cannot be empty');
     }
     
     status = SyncStatus.connecting;
@@ -235,11 +250,30 @@ class SyncService {
       final receivedPinHash = base64.decode(clientHello['pin_hash']);
       
       if (!_constantTimeEquals(pinHash, receivedPinHash)) {
-        socket.add(utf8.encode(json.encode({'type': 'error', 'message': 'Invalid PIN'})));
+        _pinAttempts++;
+        final attemptsRemaining = _maxPinAttempts - _pinAttempts;
+        
+        if (_pinAttempts >= _maxPinAttempts) {
+          socket.add(utf8.encode(json.encode({
+            'type': 'error',
+            'message': 'Maximum PIN attempts exceeded. Connection blocked.'
+          })));
+          await socket.flush();
+          await socket.close();
+          throw Exception('Maximum PIN attempts exceeded');
+        }
+        
+        socket.add(utf8.encode(json.encode({
+          'type': 'error',
+          'message': 'Invalid PIN. $attemptsRemaining attempts remaining.'
+        })));
         await socket.flush();
         await socket.close();
         throw Exception('PIN verification failed');
       }
+      
+      // Reset attempts on success
+      _pinAttempts = 0;
       
       // Send verification OK
       final okMessage = {'type': 'verify_ok'};
@@ -325,6 +359,10 @@ class SyncService {
   
   Future<SimplePublicKey> _importPublicKey(String encoded) async {
     final bytes = base64.decode(encoded);
+    // Validate public key length for X25519 (32 bytes)
+    if (bytes.length != 32) {
+      throw Exception('Invalid public key length: expected 32 bytes, got ${bytes.length}');
+    }
     return SimplePublicKey(bytes, type: KeyPairType.x25519);
   }
   
@@ -398,6 +436,7 @@ class SyncService {
     await _eventController?.close();
     _eventController = null;
     
+    _pinAttempts = 0;
     status = SyncStatus.idle;
   }
   

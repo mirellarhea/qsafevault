@@ -179,6 +179,36 @@ void main() {
       
       await serverService.stop();
     });
+
+    test('should validate PIN length', () async {
+      expect(
+        () => clientService.connectToServer(
+          address: '192.168.1.1',
+          pin: '123',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate PIN format', () async {
+      expect(
+        () => clientService.connectToServer(
+          address: '192.168.1.1',
+          pin: 'abcdef',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate address not empty', () async {
+      expect(
+        () => clientService.connectToServer(
+          address: '',
+          pin: '123456',
+        ),
+        throwsArgumentError,
+      );
+    });
   });
 
   group('PasswordEntry Sync Merge', () {
