@@ -206,10 +206,15 @@ Prerequisites
 Install deps
 - flutter pub get
 
-Run (desktop/mobile)
+Run (desktop/mobile/web)
 - Windows: flutter run -d windows
 - Linux: flutter run -d linux
 - Android: flutter run -d android
+- Web (macOS with Arc browser):
+  ```bash
+  export CHROME_EXECUTABLE="/Applications/Arc.app/Contents/MacOS/Arc"
+  flutter run -d chrome
+  ```
 
 Build release
 - Windows: flutter build windows
