@@ -5,6 +5,7 @@ import '/services/crypto_service.dart';
 import '/services/storage_service.dart';
 import 'package:cryptography/cryptography.dart';
 import '/widgets/entry_form.dart';
+import '/widgets/sync_dialog.dart';
 import 'package:qsafevault/services/theme_service.dart';
 class HomePage extends StatefulWidget {
   final StorageService storage;
@@ -159,6 +160,42 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+  
+  void _openSyncDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => SyncDialog(
+        currentVaultJson: PasswordEntry.listToJson(_entries),
+        onReceiveData: (vaultJson) {
+          try {
+            final receivedEntries = PasswordEntry.listFromJson(vaultJson);
+            setState(() {
+              // Merge strategy: combine entries, with received data taking precedence
+              final mergedEntries = <String, PasswordEntry>{};
+              
+              // Add existing entries
+              for (final entry in _entries) {
+                mergedEntries[entry.id] = entry;
+              }
+              
+              // Add/update with received entries
+              for (final entry in receivedEntries) {
+                mergedEntries[entry.id] = entry;
+              }
+              
+              _entries = mergedEntries.values.toList();
+            });
+            _saveToDisk();
+          } catch (e) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error merging data: $e')),
+            );
+          }
+        },
+      ),
+    );
+  }
   Widget _row(PasswordEntry e) {
     final primary = e.username.isNotEmpty ? e.username : e.email;
     return ListTile(
@@ -264,6 +301,11 @@ class _HomePageState extends State<HomePage> {
             tooltip: 'Toggle light/dark',
             icon: const Icon(Icons.brightness_6),
             onPressed: () => ThemeService.instance.toggleLightDark(),
+          ),
+          IconButton(
+            tooltip: 'Sync with another device',
+            icon: const Icon(Icons.sync),
+            onPressed: _openSyncDialog,
           ),
           IconButton(onPressed: _addEntry, icon: const Icon(Icons.add)),
           IconButton(

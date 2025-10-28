@@ -44,6 +44,7 @@ No cloud sync or telemetry is included.
 - Optional fast unlock using a wrapped master key in secure storage
 - Atomic writes, multi‑part file storage, backups with pruning
 - Cross‑platform UI (Windows, Linux, Android)
+- **Secure P2P device synchronization on local network**
 
 ---
 
@@ -100,15 +101,20 @@ Defends against
 - Offline access to vault files without the password.
 - Parameter tampering for fast unlock (detected via HMAC‑SHA3‑512 signature).
 - Accidental corruption during saves (atomic writes, multi‑part files, backups).
+- Man‑in‑the‑middle attacks during P2P sync (end‑to‑end encryption, PIN verification).
+- Unauthorized sync connections (6‑digit PIN required for device pairing).
 
 Out of scope
 - Compromised endpoints (malware, keyloggers, memory forensics while running).
 - Side‑channel resistance beyond constant‑time MAC compares.
-- Cloud sync and multi‑device state reconciliation.
+- Network‑level attacks on local network infrastructure.
+- Advanced persistent threats with physical device access.
 
 Operator cautions
 - Do not manually edit pwdb.meta.json. This can corrupt counters and risk nonce reuse.
 - Do not copy/move vault files while a save is in progress.
+- Only sync on trusted local networks. Verify the PIN matches on both devices before syncing.
+- If the wrong device connects, cancel the sync immediately.
 
 ---
 
@@ -135,6 +141,56 @@ Mobile considerations (Android)
 Known limitations
 - Secure storage availability varies by distro/environment. If unavailable, fast unlock is not used unless disk fallback is explicitly enabled.
 - Clipboard exposure of secrets is inherent to OS clipboards.
+
+---
+
+## Device Synchronization
+
+Q‑Safe Vault includes secure peer‑to‑peer device synchronization for syncing vaults between devices on the same local network.
+
+### How it works
+1. Both devices must be connected to the same local network
+2. One device acts as the server (receiving), the other as client (sending)
+3. Server displays a 6‑digit verification PIN and its IP addresses
+4. Client enters the server's IP address and PIN to establish connection
+5. After verification, vault data is encrypted and transferred
+6. Received entries are merged with existing entries (by ID)
+
+### Security features
+- **End‑to‑end encryption**: Ephemeral X25519 key exchange (ECDH) generates a shared secret
+- **Device pairing**: 6‑digit PIN verified via HMAC‑SHA256
+- **Encrypted transport**: All vault data encrypted with AES‑256‑GCM using the shared secret
+- **No cloud/server**: Direct peer‑to‑peer connection only
+- **Timeout protection**: Sync sessions automatically expire after 5 minutes
+- **Verification**: Both devices must confirm the same PIN for pairing
+
+### Usage
+1. Open your vault on both devices
+2. On the receiving device, tap the sync button (sync icon in top toolbar)
+3. Choose "Receive from another device"
+4. Note the PIN and IP address displayed
+5. On the sending device, tap the sync button
+6. Choose "Send to another device"
+7. Enter the IP address and PIN from the receiving device
+8. Tap "Connect and Send"
+9. Verify the connection completes successfully
+
+### Merge strategy
+- Entries are merged by unique ID
+- If the same entry exists on both devices, the received version takes precedence
+- New entries from either device are added to the merged vault
+- After sync, save the vault to persist changes
+
+### Network requirements
+- Both devices on the same local network (WiFi/LAN)
+- No firewall blocking port 48923
+- No NAT/router between devices (same subnet preferred)
+
+### Security considerations
+- Sync only on trusted networks (e.g., home WiFi)
+- Always verify the PIN matches on both devices before proceeding
+- The connection times out after 5 minutes for security
+- No data is stored on any intermediate server or cloud
 
 ---
 
@@ -191,7 +247,7 @@ README.md     # This file
 - [✅] Optional fast unlock with secure storage and tamper detection
 - [✅] Atomic writes, backups, and file‑part storage
 - [✅] Android support
-- [❌] Cloud sync or multi‑device support
+- [✅] Direct P2P device synchronization (local network)
 - [❌] Third‑party security audit
 - [❌] PQ/hybrid cryptography
 
