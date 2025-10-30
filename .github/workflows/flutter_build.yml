@@ -128,9 +128,8 @@ jobs:
 
       - name: Create Windows Installer (Inno Setup)
         run: |
-          iscc /Qp /DMyAppVersion=1.0 .github/installer.iss
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp /DMyAppVersion=1.0 .github\installer.iss
         shell: cmd
-        continue-on-error: true
 
       - name: Package fallback ZIP (if no installer)
         run: |
