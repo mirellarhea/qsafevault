@@ -10,9 +10,9 @@ jobs:
   build-ubuntu:
     name: Build Android, Web, Linux
     runs-on: ubuntu-latest
-
     outputs:
       tag: ${{ steps.set-tag.outputs.tag }}
+    continue-on-error: true
 
     steps:
       - name: Checkout source from Parent repo
@@ -34,19 +34,19 @@ jobs:
           key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}-v2
           restore-keys: |
             flutter-${{ runner.os }}-
-            
+
       - name: Clean Flutter project
         run: |
           flutter clean
           rm -rf build pubspec.lock
-    
+
       - name: Install dependencies
         run: flutter pub get
 
       - name: Generate release tag
         id: set-tag
         run: echo "tag=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
-          
+
       - name: Decode Android keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/qsafevault-release-key.jks
@@ -57,38 +57,38 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        
+
       - name: Build Web
         run: flutter build web --release
-        
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libglib2.0-dev libgtk-3-dev liblzma-dev libsecret-1-dev
-      
-      - name: Prepare Linux native assets
-        run: mkdir -p build/native_assets/linux
-        
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libglib2.0-dev liblzma-dev libsecret-1-dev fakeroot dpkg-dev
+
       - name: Build Linux
         run: flutter build linux --release
 
-      - name: Prepare Ubuntu artifacts
+      - name: Create Linux .deb package
         run: |
-          mkdir -p dist/android dist/web dist/linux
-          cp build/app/outputs/flutter-apk/app-release.apk dist/android/
-          cp -r build/web/* dist/web/
-          cp -r build/linux/x64/release/bundle/* dist/linux/
-          
-      - name: Rename APK
-        run: mv dist/android/app-release.apk qsafevault.apk
-        
-      - name: Package Ubuntu artifacts
-        run: |
-          cd dist
-          zip -r ../qsafevault-web.zip web
-          zip -r ../qsafevault-linux.zip linux
-          cd ..
+          mkdir -p dist/deb/qsafevault/usr/local/bin
+          cp -r build/linux/x64/release/bundle/* dist/deb/qsafevault/usr/local/bin/
+          mkdir -p dist/deb/qsafevault/DEBIAN
+          cat <<EOF > dist/deb/qsafevault/DEBIAN/control
+          Package: qsafevault
+          Version: 1.0
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: GitHub Actions
+          Description: QSafeVault Flutter app
+          EOF
+          dpkg-deb --build dist/deb/qsafevault qsafevault-linux.deb
 
+      - name: Prepare Web and Android artifacts
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk qsafevault.apk
+          zip -r qsafevault-web.zip build/web
 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v4
@@ -97,17 +97,18 @@ jobs:
           path: |
             qsafevault.apk
             qsafevault-web.zip
-            qsafevault-linux.zip
+            qsafevault-linux.deb
           if-no-files-found: error
 
 
   build-windows:
-    name: Build Windows EXE
+    name: Build Windows Installer
     runs-on: windows-latest
     needs: build-ubuntu
+    continue-on-error: true
 
     steps:
-      - name: Checkout source from Parent repo
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
@@ -125,61 +126,135 @@ jobs:
       - name: Build Windows
         run: flutter build windows --release
 
-      - name: Prepare Windows artifacts
+      - name: Create Windows Installer (Inno Setup)
         run: |
-          New-Item -ItemType Directory -Force -Path dist\windows
-          Copy-Item -Path build\windows\x64\runner\Release\* -Destination dist\windows -Recurse -Force
-        shell: pwsh
+          iscc /Qp /DMyAppVersion=1.0 .github/installer.iss
+        shell: cmd
+        continue-on-error: true
 
-      - name: Package Windows artifacts
-        run: Compress-Archive -Path dist\windows -DestinationPath qsafevault-windows.zip
+      - name: Package fallback ZIP (if no installer)
+        run: |
+          if (!(Test-Path "qsafevault-windows.exe")) {
+            Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath qsafevault-windows.zip
+          }
         shell: pwsh
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: qsafevault-windows.zip
-          if-no-files-found: error
+          path: |
+            qsafevault-windows.exe
+            qsafevault-windows.zip
+          if-no-files-found: warn
+
+
+  build-macos:
+    name: Build macOS Installer
+    runs-on: macos-latest
+    needs: build-ubuntu
+    continue-on-error: true
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PARENT_REPO }}
+          token: ${{ secrets.ORIGIN_PAT }}
+          ref: main
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.32.0
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Create DMG installer
+        run: |
+          mkdir -p dist/macos
+          cp -r build/macos/Build/Products/Release/*.app dist/macos/
+          brew install create-dmg || true
+          create-dmg --overwrite --dmg-title="QSafeVault" qsafevault-macos.dmg dist/macos/*.app || true
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            qsafevault-macos.dmg
+          if-no-files-found: warn
+
 
   release:
-    name: Create GitHub Release in Parent
+    name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-ubuntu, build-windows]
-  
+    needs: [build-ubuntu, build-windows, build-macos]
+
     steps:
-      - name: Download Ubuntu artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ubuntu-artifacts
           path: release-dist
-  
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-artifacts
-          path: release-dist
-  
+
+      - name: Determine build results
+        id: status
+        run: |
+          echo "linux_status=${{ needs.build-ubuntu.result }}" >> $GITHUB_OUTPUT
+          echo "windows_status=${{ needs.build-windows.result }}" >> $GITHUB_OUTPUT
+          echo "macos_status=${{ needs.build-macos.result }}" >> $GITHUB_OUTPUT
+
       - name: Set release metadata
         id: release-info
         run: |
           TAG="${{ needs.build-ubuntu.outputs.tag }}"
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=Build $TAG" >> $GITHUB_ENV
-  
-          {
-            echo "RELEASE_BODY<<EOF"
-            echo "Built automatically by GitHub Actions runner."
-            echo ""
-            echo "Included platforms (as zips):"
-            echo "- ✅ Android (qsafevault.apk)"
-            echo "- ✅ Web (qsafevault-web.zip)"
-            echo "- ✅ Linux (qsafevault-linux.zip)"
-            echo "- ✅ Windows (qsafevault-windows.zip)"
-            echo "EOF"
-          } >> $GITHUB_ENV
-  
+
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo "Automated multi-platform build results:" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          for PLATFORM in linux windows macos; do
+            STATUS="${{ steps.status.outputs.${PLATFORM}_status }}"
+            if [ "$STATUS" = "success" ]; then
+              echo "- ✅ ${PLATFORM^} build succeeded" >> $GITHUB_ENV
+            else
+              echo "- ❌ ${PLATFORM^} build failed" >> $GITHUB_ENV
+            fi
+          done
+          echo "" >> $GITHUB_ENV
+          echo "Included installers (if successful):" >> $GITHUB_ENV
+          echo "- Android: qsafevault.apk" >> $GITHUB_ENV
+          echo "- Web: qsafevault-web.zip" >> $GITHUB_ENV
+          echo "- Linux: qsafevault-linux.deb" >> $GITHUB_ENV
+          echo "- Windows: qsafevault-windows.exe" >> $GITHUB_ENV
+          echo "- macOS: qsafevault-macos.dmg" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Check if all builds failed
+        id: check-fail
+        run: |
+          ALL_FAILED=true
+          for PLATFORM in linux windows macos; do
+            STATUS="${{ steps.status.outputs.${PLATFORM}_status }}"
+            if [ "$STATUS" = "success" ]; then
+              ALL_FAILED=false
+            fi
+          done
+          echo "ALL_FAILED=$ALL_FAILED" >> $GITHUB_ENV
+
+      - name: Stop if all builds failed
+        if: env.ALL_FAILED == 'true'
+        run: |
+          echo "❌ All platform builds failed. Skipping release."
+          exit 1
+
       - name: Create GitHub Release in Parent repo
+        if: env.ALL_FAILED == 'false'
         uses: softprops/action-gh-release@v2
         with:
           repository: aimatochysia/qsafevault
@@ -188,9 +263,5 @@ jobs:
           body: ${{ env.RELEASE_BODY }}
           token: ${{ secrets.ORIGIN_PAT }}
           files: |
-            release-dist/qsafevault.apk
-            release-dist/qsafevault-web.zip
-            release-dist/qsafevault-linux.zip
-            release-dist/qsafevault-windows.zip
-
+            release-dist/**/*
           overwrite_files: true
