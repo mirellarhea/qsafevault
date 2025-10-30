@@ -215,37 +215,50 @@ jobs:
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=Build $TAG" >> $GITHUB_ENV
 
-          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
-          echo "Automated multi-platform build results:" >> $GITHUB_ENV
-          echo "" >> $GITHUB_ENV
-          for PLATFORM in linux windows macos; do
-            STATUS="${{ steps.status.outputs.${PLATFORM}_status }}"
-            if [ "$STATUS" = "success" ]; then
-              echo "- ✅ ${PLATFORM^} build succeeded" >> $GITHUB_ENV
+          # Collect status text
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo "Automated multi-platform build results:"
+            echo ""
+            if [ "${{ steps.status.outputs.linux_status }}" = "success" ]; then
+              echo "- ✅ Linux build succeeded"
             else
-              echo "- ❌ ${PLATFORM^} build failed" >> $GITHUB_ENV
+              echo "- ❌ Linux build failed"
             fi
-          done
-          echo "" >> $GITHUB_ENV
-          echo "Included installers (if successful):" >> $GITHUB_ENV
-          echo "- Android: qsafevault.apk" >> $GITHUB_ENV
-          echo "- Web: qsafevault-web.zip" >> $GITHUB_ENV
-          echo "- Linux: qsafevault-linux.deb" >> $GITHUB_ENV
-          echo "- Windows: qsafevault-windows.exe" >> $GITHUB_ENV
-          echo "- macOS: qsafevault-macos.dmg" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+
+            if [ "${{ steps.status.outputs.windows_status }}" = "success" ]; then
+              echo "- ✅ Windows build succeeded"
+            else
+              echo "- ❌ Windows build failed"
+            fi
+
+            if [ "${{ steps.status.outputs.macos_status }}" = "success" ]; then
+              echo "- ✅ macOS build succeeded"
+            else
+              echo "- ❌ macOS build failed"
+            fi
+
+            echo ""
+            echo "Included installers (if successful):"
+            echo "- Android: qsafevault.apk"
+            echo "- Web: qsafevault-web.zip"
+            echo "- Linux: qsafevault-linux.deb"
+            echo "- Windows: qsafevault-windows.exe"
+            echo "- macOS: qsafevault-macos.dmg"
+            echo "EOF"
+          } >> $GITHUB_ENV
 
       - name: Check if all builds failed
         id: check-fail
         run: |
-          ALL_FAILED=true
-          for PLATFORM in linux windows macos; do
-            STATUS="${{ steps.status.outputs.${PLATFORM}_status }}"
-            if [ "$STATUS" = "success" ]; then
-              ALL_FAILED=false
-            fi
-          done
-          echo "ALL_FAILED=$ALL_FAILED" >> $GITHUB_ENV
+          LINUX="${{ steps.status.outputs.linux_status }}"
+          WINDOWS="${{ steps.status.outputs.windows_status }}"
+          MACOS="${{ steps.status.outputs.macos_status }}"
+          if [ "$LINUX" != "success" ] && [ "$WINDOWS" != "success" ] && [ "$MACOS" != "success" ]; then
+            echo "ALL_FAILED=true" >> $GITHUB_ENV
+          else
+            echo "ALL_FAILED=false" >> $GITHUB_ENV
+          fi
 
       - name: Stop if all builds failed
         if: env.ALL_FAILED == 'true'
