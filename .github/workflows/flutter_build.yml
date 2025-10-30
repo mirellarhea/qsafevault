@@ -126,6 +126,10 @@ jobs:
       - name: Build Windows
         run: flutter build windows --release
 
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+        shell: pwsh
+        
       - name: Create Windows Installer (Inno Setup)
         run: |
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp /DMyAppVersion=1.0 .github\installer.iss
