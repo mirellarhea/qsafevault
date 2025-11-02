@@ -30,8 +30,17 @@ android {
         multiDexEnabled true
     }
 
+    // Read possible env-based signing (for CI robustness)
+    def envStorePassword = System.getenv("KEYSTORE_PASSWORD")
+    def envKeyAlias = System.getenv("KEY_ALIAS")
+    def envKeyPassword = System.getenv("KEY_PASSWORD")
+    // The CI decodes the keystore to android/app/qsafevault-release-key.jks
+    def defaultKeystoreRelPath = "qsafevault-release-key.jks"
+    def envStoreFile = System.getenv("STORE_FILE") ?: defaultKeystoreRelPath
+
     signingConfigs {
         release {
+            // Prefer key.properties when fully present
             if (keystoreProperties.containsKey('storeFile')
                     && keystoreProperties.containsKey('storePassword')
                     && keystoreProperties.containsKey('keyAlias')
@@ -40,23 +49,33 @@ android {
                 storePassword keystoreProperties['storePassword']
                 keyAlias keystoreProperties['keyAlias']
                 keyPassword keystoreProperties['keyPassword']
+            } else if (envStorePassword && envKeyAlias && envKeyPassword && file(envStoreFile).exists()) {
+                // Fallback to environment variables if key.properties not provided
+                storeFile file(envStoreFile)
+                storePassword envStorePassword
+                keyAlias envKeyAlias
+                keyPassword envKeyPassword
             }
         }
     }
 
-    // Compute if keystore is available
-    def hasKeystore = keystorePropertiesFile.exists() &&
-            keystoreProperties.containsKey('storeFile') &&
-            keystoreProperties.containsKey('storePassword') &&
-            keystoreProperties.containsKey('keyAlias') &&
-            keystoreProperties.containsKey('keyPassword')
+    // Compute if keystore is available (key.properties OR env + file)
+    def hasKeystore = (
+            keystorePropertiesFile.exists()
+            && keystoreProperties.containsKey('storeFile')
+            && keystoreProperties.containsKey('storePassword')
+            && keystoreProperties.containsKey('keyAlias')
+            && keystoreProperties.containsKey('keyPassword')
+        ) || (
+            envStorePassword && envKeyAlias && envKeyPassword && file(envStoreFile).exists()
+        )
 
     buildTypes {
         release {
             if (hasKeystore) {
                 signingConfig signingConfigs.release
             } else {
-                println("No key.properties found. Building unsigned release APK/AAB.")
+                println("No signing config found. Building unsigned release APK/AAB.")
             }
             // Shrink/obfuscate if desired:
             // minifyEnabled true

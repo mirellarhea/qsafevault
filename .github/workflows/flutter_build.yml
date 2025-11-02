@@ -51,7 +51,6 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/qsafevault-release-key.jks
 
-      # Validate keystore credentials (alias/store/key passwords)
       - name: Validate Android keystore
         id: validate-keystore
         shell: bash
@@ -79,7 +78,7 @@ jobs:
       - name: Write Android signing key.properties
         if: ${{ steps.validate-keystore.outputs.ok == 'true' }}
         run: |
-          cat > android/key.properties <<'EOF'
+          cat > android/key.properties <<EOF
           storeFile=qsafevault-release-key.jks
           storePassword=${KEYSTORE_PASSWORD}
           keyAlias=${KEY_ALIAS}
@@ -91,7 +90,11 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      # Signed build (only if keystore validated)
+      
+      - name: Remove key.properties when invalid
+        if: ${{ steps.validate-keystore.outputs.ok != 'true' }}
+        run: rm -f android/key.properties
+
       - name: Build Signed Android APK
         if: ${{ steps.validate-keystore.outputs.ok == 'true' }}
         run: flutter build apk --release --dart-define=QSV_SYNC_BASEURL=https://qsafevault-server.vercel.app
@@ -100,7 +103,6 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      # Unsigned build fallback (if validation failed)
       - name: Build Unsigned Android APK
         if: ${{ steps.validate-keystore.outputs.ok != 'true' }}
         run: |
@@ -356,7 +358,6 @@ jobs:
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=Build $TAG" >> $GITHUB_ENV
 
-          # Collect status text
           {
             echo "RELEASE_BODY<<EOF"
             echo "Automated multi-platform build results:"
