@@ -28,5 +28,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is used for device sync QR codes and WebRTC if needed.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Microphone access may be requested by WebRTC if needed.</string>
 </dict>
 </plist>

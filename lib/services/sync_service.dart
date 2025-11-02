@@ -1,534 +1,433 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
-import 'package:crypto/crypto.dart' as crypto_hash;
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:meta/meta.dart';
+import '../config/sync_config.dart';
+import 'rendezvous_client.dart';
+import 'package:qsafevault/services/secure_storage.dart';
 
-/// Device synchronization service for secure P2P vault syncing.
-/// 
-/// This service implements a secure, production-grade protocol for syncing
-/// password vaults between devices on the same local network:
-/// - End-to-end encryption using ECDH key exchange
-/// - Device pairing via 6-digit verification codes
-/// - Direct P2P connection (no cloud/server)
-/// - Automatic conflict resolution
-/// - Timeout-based security
+@immutable
+class PinSession {
+  final String sessionId;
+  final String pin;
+  final String saltB64;
+  final int ttlSec;
+  const PinSession({required this.sessionId, required this.pin, required this.saltB64, required this.ttlSec});
+}
+
+@immutable
+class JoinOffer {
+  final String sessionId;
+  final String saltB64;
+  final Map<String, String> offer;
+  const JoinOffer({required this.sessionId, required this.saltB64, required this.offer});
+}
+
 class SyncService {
-  static const int _port = 48923;
-  static const Duration _timeout = Duration(minutes: 5);
-  static const int _pinLength = 6;
-  static const int _maxPinAttempts = 3;
-  
-  ServerSocket? _server;
-  Socket? _clientSocket;
-  final _random = Random.secure();
-  StreamController<SyncEvent>? _eventController;
-  Timer? _timeoutTimer;
-  
-  /// Current sync status
+  static const _rtcConfig = {
+    'iceServers': [
+      {'urls': ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478']},
+    ],
+    'sdpSemantics': 'unified-plan',
+  };
+
+  static const _kDevicePrivKey = 'device.ed25519.priv';
+  static const _kDevicePubKey = 'device.ed25519.pub';
+  static const _kTrustedPeers = 'sync.trusted.pubkeys';
+
+  final SecureStorage _secure = SecureStorage();
+  final RendezvousClient _rv = RendezvousClient(config: SyncConfig.defaults());
+
+  SimpleKeyPair? _deviceKeyPair;
+  String? _devicePubKeyB64;
+
+  RTCPeerConnection? _pc;
+  RTCDataChannel? _dc;
+  StreamController<SyncEvent>? _events;
   SyncStatus status = SyncStatus.idle;
-  
-  /// Start as sync server (receiving device)
-  Future<SyncSession> startServer() async {
-    if (status != SyncStatus.idle) {
-      throw StateError('Sync already in progress');
-    }
-    
-    status = SyncStatus.waitingForConnection;
-    _eventController = StreamController<SyncEvent>.broadcast();
-    
-    try {
-      // Bind to all interfaces to allow local network connections
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, _port);
-      
-      // Generate verification PIN
-      final pin = _generatePin();
-      
-      // Get local IP addresses
-      final addresses = await _getLocalAddresses();
-      
-      // Start timeout
-      _startTimeout();
-      
-      _eventController!.add(SyncEvent.serverStarted(
-        pin: pin,
-        addresses: addresses,
-      ));
-      
-      // Wait for connection
-      final session = await _handleServerConnection(pin);
-      return session;
-    } catch (e) {
-      await _cleanup();
-      rethrow;
-    }
+
+  Set<String> _trustedPeers = {};
+
+  String? _remotePubKeyB64;
+  bool _channelOpen = false;
+
+
+  Stream<SyncEvent>? get events => _events?.stream;
+
+  Future<void> init() async {
+    if (_events != null) return;
+    _events = StreamController<SyncEvent>.broadcast();
+    await _loadOrCreateDeviceKeys();
+    await _loadTrustedPeers();
   }
-  
-  /// Connect to sync server (initiating device)
-  Future<SyncSession> connectToServer({
-    required String address,
-    required String pin,
-  }) async {
-    if (status != SyncStatus.idle) {
-      throw StateError('Sync already in progress');
-    }
-    
-    // Validate PIN format
-    if (pin.length != _pinLength) {
-      throw ArgumentError('PIN must be $_pinLength digits');
-    }
-    if (int.tryParse(pin) == null) {
-      throw ArgumentError('PIN must contain only digits');
-    }
-    
-    // Validate address format
-    if (address.isEmpty) {
-      throw ArgumentError('Address cannot be empty');
-    }
-    
-    status = SyncStatus.connecting;
-    _eventController = StreamController<SyncEvent>.broadcast();
-    
-    try {
-      // Start timeout
-      _startTimeout();
-      
-      // Connect to server
-      _clientSocket = await Socket.connect(address, _port)
-          .timeout(_timeout);
-      
-      _eventController!.add(SyncEvent.connected());
-      
-      // Perform handshake
-      final session = await _performClientHandshake(pin);
-      return session;
-    } catch (e) {
-      await _cleanup();
-      rethrow;
-    }
+
+  Future<String> getDevicePublicKeyBase64() async {
+    await init();
+    return _devicePubKeyB64!;
   }
-  
-  /// Sync vault data to peer
-  Future<void> sendVaultData(SyncSession session, String vaultJson) async {
-    if (_clientSocket == null && _server == null) {
-      throw StateError('No active connection');
-    }
-    
-    final socket = _clientSocket ?? session._socket;
-    
-    try {
-      // Encrypt vault data
-      final plaintext = utf8.encode(vaultJson);
-      final algorithm = AesGcm.with256bits();
-      final nonce = algorithm.newNonce();
-      
-      final secretBox = await algorithm.encrypt(
-        plaintext,
-        secretKey: session._sharedSecret,
-        nonce: nonce,
-      );
-      
-      // Send encrypted data
-      final message = {
-        'type': 'vault_data',
-        'nonce': base64.encode(nonce),
-        'ciphertext': base64.encode(secretBox.cipherText),
-        'mac': base64.encode(secretBox.mac.bytes),
-      };
-      
-      final messageBytes = utf8.encode(json.encode(message));
-      final length = messageBytes.length;
-      
-      // Send length prefix (4 bytes)
-      final lengthBytes = Uint8List(4)
-        ..buffer.asByteData().setUint32(0, length, Endian.big);
-      socket.add(lengthBytes);
-      socket.add(messageBytes);
-      await socket.flush();
-      
-      _eventController?.add(SyncEvent.dataSent());
-    } catch (e) {
-      _eventController?.add(SyncEvent.error('Failed to send data: $e'));
-      rethrow;
-    }
+
+  Future<void> addTrustedPeer(String peerPubKeyBase64) async {
+    await init();
+    _trustedPeers.add(peerPubKeyBase64);
+    await _persistTrustedPeers();
+    _events?.add(SyncEvent.trustedPeersUpdated(_trustedPeers.toList()));
   }
-  
-  /// Receive vault data from peer
-  Future<String> receiveVaultData(SyncSession session) async {
-    final socket = _clientSocket ?? session._socket;
-    
-    try {
-      // Read length prefix
-      final lengthBytes = await _readExactly(socket, 4);
-      final length = lengthBytes.buffer.asByteData().getUint32(0, Endian.big);
-      
-      if (length > 100 * 1024 * 1024) { // 100MB max
-        throw Exception('Data too large');
-      }
-      
-      // Read message
-      final messageBytes = await _readExactly(socket, length);
-      final messageJson = json.decode(utf8.decode(messageBytes));
-      
-      if (messageJson['type'] != 'vault_data') {
-        throw Exception('Unexpected message type');
-      }
-      
-      // Decrypt vault data
-      final nonce = base64.decode(messageJson['nonce']);
-      final ciphertext = base64.decode(messageJson['ciphertext']);
-      final mac = base64.decode(messageJson['mac']);
-      
-      final algorithm = AesGcm.with256bits();
-      final secretBox = SecretBox(
-        ciphertext,
-        nonce: nonce,
-        mac: Mac(mac),
-      );
-      
-      final plaintext = await algorithm.decrypt(
-        secretBox,
-        secretKey: session._sharedSecret,
-      );
-      
-      final vaultJson = utf8.decode(plaintext);
-      _eventController?.add(SyncEvent.dataReceived());
-      
-      return vaultJson;
-    } catch (e) {
-      _eventController?.add(SyncEvent.error('Failed to receive data: $e'));
-      rethrow;
-    }
+
+  Future<List<String>> getTrustedPeers() async {
+    await init();
+    return _trustedPeers.toList();
   }
-  
-  /// Stop sync and cleanup
+
+  Future<Map<String, String>> createOffer() async {
+    await init();
+    await _ensurePcAndChannel(isOfferer: true);
+
+    status = SyncStatus.signaling;
+    final offer = await _pc!.createOffer({'offerToReceiveAudio': false, 'offerToReceiveVideo': false});
+    await _pc!.setLocalDescription(offer);
+
+    await _awaitIceGatheringComplete();
+    final local = await _pc!.getLocalDescription();
+    final payload = <String, String>{
+      'type': local?.type ?? 'offer',
+      'sdp': local?.sdp ?? '',
+    };
+    _events?.add(SyncEvent.localDescriptionReady(payload['sdp']!, payload['type']!));
+    return payload;
+  }
+
+  Future<void> setRemoteAnswer(Map<String, String> answer) async {
+    if (_pc == null) throw StateError('PeerConnection not initialized');
+    final desc = RTCSessionDescription(answer['sdp']!, answer['type']!);
+    await _pc!.setRemoteDescription(desc);
+  }
+
+  Future<Map<String, String>> createAnswerForRemoteOffer(Map<String, String> remoteOffer) async {
+    await init();
+    await _ensurePcAndChannel(isOfferer: false);
+
+    status = SyncStatus.signaling;
+    final offer = RTCSessionDescription(remoteOffer['sdp']!, remoteOffer['type']!);
+    await _pc!.setRemoteDescription(offer);
+
+    final answer = await _pc!.createAnswer({'offerToReceiveAudio': false, 'offerToReceiveVideo': false});
+    await _pc!.setLocalDescription(answer);
+
+    await _awaitIceGatheringComplete();
+    final local = await _pc!.getLocalDescription();
+    final payload = <String, String>{
+      'type': local?.type ?? 'answer',
+      'sdp': local?.sdp ?? '',
+    };
+    _events?.add(SyncEvent.localDescriptionReady(payload['sdp']!, payload['type']!));
+    return payload;
+  }
+
+
+  Future<void> sendHello() async {
+    _ensureChannelOpen();
+    final msg = {
+      'type': 'hello',
+      'pubKey': _devicePubKeyB64,
+      'version': 1,
+    };
+    _dc!.send(RTCDataChannelMessage(jsonEncode(msg)));
+  }
+
+  Future<SyncManifest> sendManifest(String vaultJson) async {
+    _ensureChannelOpen();
+    final m = SyncManifest.fromVaultJson(vaultJson);
+    final msg = {
+      'type': 'manifest',
+      'timestamp': m.timestampMs,
+      'hash': m.hashBase64,
+      'version': m.version,
+    };
+    _dc!.send(RTCDataChannelMessage(jsonEncode(msg)));
+    return m;
+  }
+
+  Future<void> requestVault() async {
+    _ensureChannelOpen();
+    _dc!.send(RTCDataChannelMessage(jsonEncode({'type': 'request_vault'})));
+  }
+
+  Future<void> sendVaultData(String vaultJson) async {
+    _ensureChannelOpen();
+    _dc!.send(RTCDataChannelMessage(jsonEncode({
+      'type': 'vault',
+      'json': vaultJson,
+    })));
+    _events?.add(const DataSentEvent());
+  }
+
   Future<void> stop() async {
-    await _cleanup();
-  }
-  
-  /// Event stream for sync progress
-  Stream<SyncEvent>? get events => _eventController?.stream;
-  
-  // Private methods
-  
-  Future<SyncSession> _handleServerConnection(String expectedPin) async {
-    final socket = await _server!.first.timeout(_timeout);
-    status = SyncStatus.handshaking;
-    
-    // Local PIN attempts counter for this connection
-    int pinAttempts = 0;
-    
     try {
-      // Perform ECDH key exchange
-      final keyPair = await _generateKeyPair();
-      final localPublicKey = await keyPair.extractPublicKey();
-      
-      // Send server hello with public key
-      final serverHello = {
-        'type': 'server_hello',
-        'public_key': await _exportPublicKey(localPublicKey),
+      await _dc?.close();
+    } catch (_) {}
+    try {
+      await _pc?.close();
+    } catch (_) {}
+    _dc = null;
+    _pc = null;
+    _channelOpen = false;
+    _remotePubKeyB64 = null;
+    status = SyncStatus.idle;
+    await _events?.close();
+    _events = null;
+  }
+
+
+  Future<void> _ensurePcAndChannel({required bool isOfferer}) async {
+    if (_pc != null) return;
+    _pc = await createPeerConnection(_rtcConfig);
+
+    if (isOfferer) {
+      final init = RTCDataChannelInit()..ordered = true;
+      _dc = await _pc!.createDataChannel('sync', init);
+      _wireDataChannel(_dc!);
+    } else {
+      _pc!.onDataChannel = (ch) {
+        _dc = ch;
+        _wireDataChannel(ch);
       };
-      final helloBytes = utf8.encode(json.encode(serverHello));
-      socket.add(_lengthPrefix(helloBytes));
-      socket.add(helloBytes);
-      await socket.flush();
-      
-      // Receive client hello
-      final clientHelloBytes = await _readMessage(socket);
-      final clientHello = json.decode(utf8.decode(clientHelloBytes));
-      
-      if (clientHello['type'] != 'client_hello') {
-        throw Exception('Invalid handshake');
+    }
+
+    _pc!.onIceConnectionState = (state) {
+    };
+    _pc!.onConnectionState = (state) {
+    };
+  }
+
+  void _wireDataChannel(RTCDataChannel ch) {
+    ch.onDataChannelState = (s) async {
+      if (s == RTCDataChannelState.RTCDataChannelOpen) {
+        _channelOpen = true;
+        status = SyncStatus.connected;
+        _events?.add(const HandshakeCompleteEvent());
+        await sendHello();
       }
-      
-      final clientPublicKey = await _importPublicKey(clientHello['public_key']);
-      
-      // Derive shared secret
-      final sharedSecret = await _deriveSharedSecret(keyPair, clientPublicKey);
-      
-      // Verify PIN
-      final pinHash = await _hashPin(expectedPin, sharedSecret);
-      final receivedPinHash = base64.decode(clientHello['pin_hash']);
-      
-      if (!_constantTimeEquals(pinHash, receivedPinHash)) {
-        pinAttempts++;
-        final attemptsRemaining = _maxPinAttempts - pinAttempts;
-        
-        if (pinAttempts >= _maxPinAttempts) {
-          await _sendErrorMessage(
-            socket,
-            'Maximum PIN attempts exceeded. Connection blocked.',
+    };
+    ch.onMessage = (RTCDataChannelMessage m) async {
+      final obj = jsonDecode(m.text);
+      switch (obj['type']) {
+        case 'hello':
+          _remotePubKeyB64 = obj['pubKey'] as String?;
+          if (_remotePubKeyB64 == null) {
+            _events?.add(const ErrorEvent('Missing peer public key'));
+            await stop();
+            return;
+          }
+          if (!_trustedPeers.contains(_remotePubKeyB64)) {
+            _events?.add(UntrustedPeerEvent(_remotePubKeyB64!));
+            return;
+          }
+          _events?.add(PeerAuthenticatedEvent(_remotePubKeyB64!));
+          break;
+
+        case 'manifest':
+          final manifest = SyncManifest(
+            version: (obj['version'] ?? 1) as int,
+            timestampMs: (obj['timestamp'] as num).toInt(),
+            hashBase64: obj['hash'] as String,
           );
-          throw Exception('Maximum PIN attempts exceeded');
-        }
-        
-        await _sendErrorMessage(
-          socket,
-          'Invalid PIN. $attemptsRemaining attempts remaining.',
-        );
-        throw Exception('PIN verification failed');
+          _events?.add(ManifestReceivedEvent(manifest));
+          break;
+
+        case 'request_vault':
+          _events?.add(const VaultRequestedEvent());
+          break;
+
+        case 'vault':
+          final vaultJson = obj['json'] as String;
+          _events?.add(const DataReceivedEvent());
+          _events?.add(VaultReceivedEvent(vaultJson));
+          break;
+
+        case 'ack':
+          break;
+
+        default:
+          _events?.add(ErrorEvent('Unknown message type: ${obj['type']}'));
       }
-      
-      // Send verification OK
-      final okMessage = {'type': 'verify_ok'};
-      final okBytes = utf8.encode(json.encode(okMessage));
-      socket.add(_lengthPrefix(okBytes));
-      socket.add(okBytes);
-      await socket.flush();
-      
-      status = SyncStatus.connected;
-      _eventController?.add(SyncEvent.handshakeComplete());
-      
-      return SyncSession._(sharedSecret, socket);
-    } catch (e) {
-      await socket.close();
-      rethrow;
-    }
+    };
   }
-  
-  Future<SyncSession> _performClientHandshake(String pin) async {
-    final socket = _clientSocket!;
-    status = SyncStatus.handshaking;
-    
-    try {
-      // Generate ECDH key pair
-      final keyPair = await _generateKeyPair();
-      final localPublicKey = await keyPair.extractPublicKey();
-      
-      // Receive server hello
-      final serverHelloBytes = await _readMessage(socket);
-      final serverHello = json.decode(utf8.decode(serverHelloBytes));
-      
-      if (serverHello['type'] != 'server_hello') {
-        throw Exception('Invalid handshake');
+
+  Future<void> _awaitIceGatheringComplete() async {
+    final c = Completer<void>();
+    if (_pc == null) {
+      c.complete();
+      return c.future;
+    }
+    if (_pc!.iceGatheringState == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+      c.complete();
+      return c.future;
+    }
+    _pc!.onIceGatheringState = (s) {
+      if (s == RTCIceGatheringState.RTCIceGatheringStateComplete && !c.isCompleted) {
+        c.complete();
       }
-      
-      final serverPublicKey = await _importPublicKey(serverHello['public_key']);
-      
-      // Derive shared secret
-      final sharedSecret = await _deriveSharedSecret(keyPair, serverPublicKey);
-      
-      // Send client hello with PIN hash
-      final pinHash = await _hashPin(pin, sharedSecret);
-      final clientHello = {
-        'type': 'client_hello',
-        'public_key': await _exportPublicKey(localPublicKey),
-        'pin_hash': base64.encode(pinHash),
-      };
-      final helloBytes = utf8.encode(json.encode(clientHello));
-      socket.add(_lengthPrefix(helloBytes));
-      socket.add(helloBytes);
-      await socket.flush();
-      
-      // Receive verification response
-      final verifyBytes = await _readMessage(socket);
-      final verifyMsg = json.decode(utf8.decode(verifyBytes));
-      
-      if (verifyMsg['type'] == 'error') {
-        throw Exception(verifyMsg['message'] ?? 'Handshake failed');
-      }
-      
-      if (verifyMsg['type'] != 'verify_ok') {
-        throw Exception('Invalid verification response');
-      }
-      
-      status = SyncStatus.connected;
-      _eventController?.add(SyncEvent.handshakeComplete());
-      
-      return SyncSession._(sharedSecret, socket);
-    } catch (e) {
-      await socket.close();
-      rethrow;
-    }
-  }
-  
-  Future<SimpleKeyPair> _generateKeyPair() async {
-    final algorithm = X25519();
-    return await algorithm.newKeyPair();
-  }
-  
-  Future<String> _exportPublicKey(SimplePublicKey publicKey) async {
-    final bytes = publicKey.bytes;
-    return base64.encode(bytes);
-  }
-  
-  Future<SimplePublicKey> _importPublicKey(String encoded) async {
-    final bytes = base64.decode(encoded);
-    // Validate public key length for X25519 (32 bytes)
-    if (bytes.length != 32) {
-      throw Exception('Invalid public key length: expected 32 bytes, got ${bytes.length}');
-    }
-    return SimplePublicKey(bytes, type: KeyPairType.x25519);
-  }
-  
-  Future<SecretKey> _deriveSharedSecret(
-    SimpleKeyPair keyPair,
-    SimplePublicKey peerPublicKey,
-  ) async {
-    final algorithm = X25519();
-    final sharedSecret = await algorithm.sharedSecretKey(
-      keyPair: keyPair,
-      remotePublicKey: peerPublicKey,
-    );
-    return sharedSecret;
-  }
-  
-  Future<Uint8List> _hashPin(String pin, SecretKey sharedSecret) async {
-    final pinBytes = utf8.encode(pin);
-    final keyBytes = await sharedSecret.extractBytes();
-    final hmac = crypto_hash.Hmac(crypto_hash.sha256, keyBytes);
-    final digest = hmac.convert(pinBytes);
-    return Uint8List.fromList(digest.bytes);
-  }
-  
-  Future<void> _sendErrorMessage(Socket socket, String message) async {
-    final errorMsg = json.encode({'type': 'error', 'message': message});
-    socket.add(utf8.encode(errorMsg));
-    await socket.flush();
-    await socket.close();
-  }
-  
-  bool _constantTimeEquals(List<int> a, List<int> b) {
-    if (a.length != b.length) return false;
-    int result = 0;
-    for (int i = 0; i < a.length; i++) {
-      result |= a[i] ^ b[i];
-    }
-    return result == 0;
-  }
-  
-  String _generatePin() {
-    final pin = _random.nextInt(1000000).toString().padLeft(_pinLength, '0');
-    return pin;
-  }
-  
-  Future<List<String>> _getLocalAddresses() async {
-    final interfaces = await NetworkInterface.list(
-      includeLoopback: false,
-      type: InternetAddressType.IPv4,
-    );
-    
-    final addresses = <String>[];
-    for (final interface in interfaces) {
-      for (final addr in interface.addresses) {
-        addresses.add(addr.address);
-      }
-    }
-    return addresses;
-  }
-  
-  void _startTimeout() {
-    _timeoutTimer?.cancel();
-    _timeoutTimer = Timer(_timeout, () async {
-      _eventController?.add(SyncEvent.error('Sync timeout'));
-      await _cleanup();
+    };
+    return c.future.timeout(const Duration(seconds: 10), onTimeout: () {
+      if (!c.isCompleted) c.complete();
     });
   }
-  
-  Future<void> _cleanup() async {
-    _timeoutTimer?.cancel();
-    _timeoutTimer = null;
-    
-    await _server?.close();
-    _server = null;
-    
-    await _clientSocket?.close();
-    _clientSocket = null;
-    
-    await _eventController?.close();
-    _eventController = null;
-    
-    status = SyncStatus.idle;
-  }
-  
-  Uint8List _lengthPrefix(List<int> data) {
-    final length = data.length;
-    return Uint8List(4)
-      ..buffer.asByteData().setUint32(0, length, Endian.big);
-  }
-  
-  Future<Uint8List> _readMessage(Socket socket) async {
-    final lengthBytes = await _readExactly(socket, 4);
-    final length = lengthBytes.buffer.asByteData().getUint32(0, Endian.big);
-    
-    if (length > 10 * 1024 * 1024) { // 10MB max for handshake messages
-      throw Exception('Message too large');
+
+  void _ensureChannelOpen() {
+    if (_dc == null || !_channelOpen) {
+      throw StateError('Data channel is not open');
     }
-    
-    return await _readExactly(socket, length);
   }
-  
-  Future<Uint8List> _readExactly(Socket socket, int length) async {
-    final buffer = BytesBuilder(copy: false);
-    int remaining = length;
-    
-    await for (final chunk in socket) {
-      buffer.add(chunk);
-      remaining -= chunk.length;
-      
-      if (remaining <= 0) {
-        break;
-      }
+
+
+  Future<void> _loadOrCreateDeviceKeys() async {
+    final existingPriv = await _secure.read(_kDevicePrivKey);
+    final existingPub = await _secure.read(_kDevicePubKey);
+
+    if (existingPriv != null && existingPub != null) {
+      _deviceKeyPair = SimpleKeyPairData(
+        Uint8List.fromList(existingPriv),
+        publicKey: SimplePublicKey(existingPub, type: KeyPairType.ed25519),
+        type: KeyPairType.ed25519,
+      );
+      _devicePubKeyB64 = base64Encode(existingPub);
+      return;
     }
-    
-    final result = buffer.takeBytes();
-    if (result.length != length) {
-      throw Exception('Incomplete read: expected $length, got ${result.length}');
+
+    final alg = Ed25519();
+    final kp = await alg.newKeyPair();
+    final pub = await kp.extractPublicKey();
+    final privBytes = await kp.extractPrivateKeyBytes();
+    final pubBytes = pub.bytes;
+
+    await _secure.write(_kDevicePrivKey, privBytes);
+    await _secure.write(_kDevicePubKey, pubBytes);
+
+    _deviceKeyPair = kp;
+    _devicePubKeyB64 = base64Encode(pubBytes);
+  }
+
+  Future<void> _loadTrustedPeers() async {
+    final raw = await _secure.read(_kTrustedPeers);
+    if (raw == null || raw.isEmpty) {
+      _trustedPeers = {};
+      return;
     }
-    
-    return Uint8List.fromList(result);
+    try {
+      final list = jsonDecode(utf8.decode(raw)) as List<dynamic>;
+      _trustedPeers = list.map((e) => e as String).toSet();
+    } catch (_) {
+      _trustedPeers = {};
+    }
+  }
+
+  Future<void> _persistTrustedPeers() async {
+    final bytes = utf8.encode(jsonEncode(_trustedPeers.toList()));
+    await _secure.write(_kTrustedPeers, bytes);
+  }
+
+  Future<PinSession> createPinPairingSession() async {
+    final s = await _rv.createSession();
+    return PinSession(sessionId: s.sessionId, pin: s.pin, saltB64: s.saltB64, ttlSec: s.ttlSec);
+  }
+
+  Future<void> hostPublishOffer({
+    required String sessionId,
+    required String pin,
+    required String saltB64,
+    required Map<String, String> offer,
+  }) async {
+    final env = await _rv.sealPayload(sessionId: sessionId, pin: pin, saltB64: saltB64, payload: offer);
+    await _rv.putOffer(sessionId: sessionId, envelope: env);
+  }
+
+  Future<void> hostWaitForAnswer({
+    required String sessionId,
+    required String pin,
+    required String saltB64,
+    Duration? maxWait,
+  }) async {
+    final env = await _rv.pollAnswer(
+      sessionId: sessionId,
+      maxWait: maxWait ?? SyncConfig.defaults().pollMaxWait,
+    );
+    if (env == null) throw Exception('Answer not received before timeout');
+    final payload = await _rv.openEnvelope(envelope: env, pin: pin, saltB64: saltB64);
+    final answer = {
+      'type': payload['type'] as String,
+      'sdp': payload['sdp'] as String,
+    };
+    await setRemoteAnswer(answer);
+    try { await _rv.closeSession(sessionId); } catch (_) {}
+  }
+
+  Future<JoinOffer> joinFetchOfferByPin(String pin) async {
+    final r = await _rv.resolveByPin(pin);
+    final int waitSec = (r.ttlSec ?? 30);
+    final int bounded = waitSec > 30 ? 30 : (waitSec < 1 ? 1 : waitSec);
+    final env = await _rv.pollOffer(
+      sessionId: r.sessionId,
+      maxWait: Duration(seconds: bounded),
+    );
+    if (env == null) throw Exception('Offer not yet available');
+    final payload = await _rv.openEnvelope(envelope: env, pin: pin, saltB64: r.saltB64);
+    final offer = {
+      'type': payload['type'] as String,
+      'sdp': payload['sdp'] as String,
+    };
+    return JoinOffer(sessionId: r.sessionId, saltB64: r.saltB64, offer: offer);
+  }
+
+  Future<void> joinPublishAnswer({
+    required String sessionId,
+    required String pin,
+    required String saltB64,
+    required Map<String, String> answer,
+  }) async {
+    final env = await _rv.sealPayload(sessionId: sessionId, pin: pin, saltB64: saltB64, payload: answer);
+    await _rv.putAnswer(sessionId: sessionId, envelope: env);
   }
 }
 
-/// Sync session representing an active connection
-class SyncSession {
-  final SecretKey _sharedSecret;
-  final Socket _socket;
-  
-  SyncSession._(this._sharedSecret, this._socket);
-  
-  /// Close the session
-  Future<void> close() async {
-    await _socket.close();
+
+class SyncManifest {
+  final int version;
+  final int timestampMs;
+  final String hashBase64;
+
+  SyncManifest({required this.version, required this.timestampMs, required this.hashBase64});
+
+  static SyncManifest fromVaultJson(String vaultJson) {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final digest = crypto.sha256.convert(utf8.encode(vaultJson));
+    return SyncManifest(version: 1, timestampMs: ts, hashBase64: base64Encode(digest.bytes));
   }
 }
 
-/// Sync status enumeration
-enum SyncStatus {
-  idle,
-  waitingForConnection,
-  connecting,
-  handshaking,
-  connected,
-}
+enum SyncStatus { idle, signaling, connected }
 
-/// Sync events for UI updates
 abstract class SyncEvent {
   const SyncEvent();
-  
-  factory SyncEvent.serverStarted({
-    required String pin,
-    required List<String> addresses,
-  }) = ServerStartedEvent;
-  
-  factory SyncEvent.connected() = ConnectedEvent;
+  factory SyncEvent.localDescriptionReady(String sdp, String type) = LocalDescriptionReadyEvent;
   factory SyncEvent.handshakeComplete() = HandshakeCompleteEvent;
   factory SyncEvent.dataSent() = DataSentEvent;
   factory SyncEvent.dataReceived() = DataReceivedEvent;
   factory SyncEvent.error(String message) = ErrorEvent;
+  factory SyncEvent.manifestReceived(SyncManifest manifest) = ManifestReceivedEvent;
+  factory SyncEvent.vaultReceived(String json) = VaultReceivedEvent;
+  factory SyncEvent.untrustedPeer(String pubKeyB64) = UntrustedPeerEvent;
+  factory SyncEvent.peerAuthenticated(String pubKeyB64) = PeerAuthenticatedEvent;
+  factory SyncEvent.trustedPeersUpdated(List<String> peers) = TrustedPeersUpdatedEvent;
+  factory SyncEvent.vaultRequested() = VaultRequestedEvent;
 }
 
-class ServerStartedEvent extends SyncEvent {
-  final String pin;
-  final List<String> addresses;
-  
-  const ServerStartedEvent({required this.pin, required this.addresses});
-}
-
-class ConnectedEvent extends SyncEvent {
-  const ConnectedEvent();
+class LocalDescriptionReadyEvent extends SyncEvent {
+  final String sdp;
+  final String type;
+  const LocalDescriptionReadyEvent(this.sdp, this.type);
 }
 
 class HandshakeCompleteEvent extends SyncEvent {
@@ -545,6 +444,34 @@ class DataReceivedEvent extends SyncEvent {
 
 class ErrorEvent extends SyncEvent {
   final String message;
-  
   const ErrorEvent(this.message);
+}
+
+class ManifestReceivedEvent extends SyncEvent {
+  final SyncManifest manifest;
+  const ManifestReceivedEvent(this.manifest);
+}
+
+class VaultReceivedEvent extends SyncEvent {
+  final String json;
+  const VaultReceivedEvent(this.json);
+}
+
+class UntrustedPeerEvent extends SyncEvent {
+  final String pubKeyB64;
+  const UntrustedPeerEvent(this.pubKeyB64);
+}
+
+class PeerAuthenticatedEvent extends SyncEvent {
+  final String pubKeyB64;
+  const PeerAuthenticatedEvent(this.pubKeyB64);
+}
+
+class TrustedPeersUpdatedEvent extends SyncEvent {
+  final List<String> peers;
+  const TrustedPeersUpdatedEvent(this.peers);
+}
+
+class VaultRequestedEvent extends SyncEvent {
+  const VaultRequestedEvent();
 }

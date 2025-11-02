@@ -1,220 +1,108 @@
 # Q‑Safe Vault
 
-A secure, local-only password manager built with Flutter. Vault data is encrypted at rest using AES‑256‑GCM, with password-based key derivation via Argon2id and optional fast-unlock backed by platform secure storage.
+A secure, local‑first password manager built with Flutter. Vault data is encrypted at rest with AES‑256‑GCM, using Argon2id for password‑based key derivation and optional fast‑unlock keys wrapped in platform secure storage. Device‑to‑device sync uses WebRTC data channels, authenticated by Ed25519 device identities, and a short‑lived PIN rendezvous.
+
+Key highlights
+- Local‑only vault; no cloud storage
+- AES‑256‑GCM encryption; Argon2id KDF
+- Fast unlock via OS secure storage (optional)
+- Cross‑platform app (Windows, Linux, Android; macOS/iOS planned)
+- Peer‑to‑peer sync over WebRTC with PIN rendezvous
+- No telemetry
 
 Supported platforms
-- Windows (supported)
-- Linux (supported)
-- Android (supported)
+- Windows (desktop)
+- Linux (desktop)
+- Android (mobile)
+- macOS/iOS (on dev)
 
-Downloads
-- Prebuilt releases are available from the repository’s Releases tab (Windows, Linux, Android APK/AAB).
+License
+- Creative Commons Attribution‑NonCommercial 4.0 International (CC BY‑NC 4.0)
 
 ---
 
 ## Table of contents
-- [Overview](#overview)
-- [Key features](#key-features)
-- [Security architecture](#security-architecture)
-- [Threat model](#threat-model)
-- [Operational guidance](#operational-guidance)
-- [Build, run, and test](#build-run-and-test)
-- [Repository layout](#repository-layout)
-- [Roadmap & status](#roadmap--status)
-- [Responsible disclosure](#responsible-disclosure)
-- [License](#license)
-- [Contact](#contact)
+- Overview and architecture
+- Security model
+- Requirements
+- Install and run
+- Build from source
+- Configuration (rendezvous server, environment)
+- Device synchronization (PIN pairing)
+- Troubleshooting
+- Contributing
+- Roadmap
+- License and acknowledgements
 
 ---
 
-## Overview
-Q‑Safe Vault keeps your password vault local and encrypted. It uses well‑maintained crypto libraries:
-- cryptography for AES‑GCM and SecretKey handling
-- pointycastle and crypto for HMACs and hashing
-- flutter_secure_storage for OS‑backed secure storage used by fast‑unlock
+## Overview and architecture
 
-No cloud sync or telemetry is included.
+Components
+- App: Flutter UI and services (vault storage, crypto, sync).
+- Storage: AES‑256‑GCM encrypted vault; atomic writes; backups; optional wrapped key in secure storage.
+- Device identity: Ed25519 key pair generated per device; public key shared to build a trusted peers list.
+- Sync: WebRTC data channel with rendezvous signaling via short PIN. Offer/Answer are sealed using a key derived from the PIN (Argon2id + AES‑GCM) so the server never sees plaintext SDP.
 
----
-
-## Key features
-- Local‑only, encrypted vault at rest
-- AES‑256‑GCM (cryptography) for confidentiality and integrity
-- Password KDF: Argon2id with runtime calibration to target device cost
-- Optional fast unlock using a wrapped master key in secure storage
-- Atomic writes, multi‑part file storage, backups with pruning
-- Cross‑platform UI (Windows, Linux, Android)
-- **Secure P2P device synchronization on local network**
-
----
-
-## Security architecture
-
-Cryptography and KDFs
-- Master encryption: AES‑256‑GCM (256‑bit key) for vault data.
-- Password KDF (slow path): Argon2id with runtime calibration targeting ~400 ms on the current device (bounds enforced by minimums).
-- Fast unlock KDF: Argon2id targeting ~120 ms to derive a fast key that wraps the master key for quicker unlocks.
-- Verifier: HMAC‑SHA3‑512 keyed by the master key to validate password correctness without decrypting the vault.
-- Fast‑params signature: HMAC‑SHA3‑512 keyed by the master key to detect tampering of stored fast‑unlock parameters.
-
-Key wrapping and nonces
-- Wrapped master key: AES‑GCM over (wrap_label || master_key). The 96‑bit nonce is deterministically derived as HMAC‑SHA256(fast_key, label|ctr) using a monotonic counter stored in metadata. This prevents nonce reuse across rewraps.
-- Entry nonces/tags: Deterministic 96‑bit nonces and accept tags derived from the master key using labeled HMACs to avoid collisions and bind to a counter (and optional entryId).
-
-Integrity and comparisons
-- AEAD tags protect vault and wrapped key blobs.
-- Constant‑time comparisons for MACs to reduce timing differences.
-- Best‑effort zeroization of sensitive byte arrays after use (language‑level limitations apply).
-
-Storage layout and metadata
-- pwdb.meta.json: KDF parameters, salts, counters, cipher info, verifier, fast‑unlock params/signature.
-- pwdb.enc.partN: Encrypted vault split into parts for safer updates.
-- derived.key (optional): Wrapped master key on disk only when explicitly allowed (see configuration). By default, wrapped key is stored in secure storage if available; disk fallback is disabled.
-
-Backups, atomicity, and concurrency
-- Atomic writes via .tmp file rename.
-- Per‑save backups (.bak) created, with old backups pruned (keep latest).
-- Synchronization locks guard critical write paths.
-
-Secure storage (fast unlock)
-- Platform backends via flutter_secure_storage:
-  - Windows: DPAPI
-  - macOS/iOS: Keychain
-  - Android: EncryptedSharedPreferences
-- Availability is verified with a write/read/delete probe. If available, the wrapped master key is stored there.
-- If not available and disk fallback is disabled, the app falls back to slow KDF (no fast unlock on that device).
-
-Privacy
-- No telemetry or analytics.
-- Password creation UI optionally queries the HIBP “Pwned Passwords” k‑Anonymity API (range endpoint) to check breach exposure. Only the SHA‑1 prefix (first 5 hex chars) is sent; your full password is never transmitted.
-- Clipboard operations may expose secrets to the OS/global clipboard. Handle with care on shared systems.
-
-Post‑quantum note
-- Current primitives are classical: AES‑256‑GCM, Argon2id, HMAC‑SHA3‑512/HMAC‑SHA256.
-- AES‑256 maintains strong margins under Grover assumptions (effective ~128‑bit).
-- No PQ/hybrid primitives are implemented yet.
+Data flow
+1) Unlock vault with password (Argon2id -> master key -> decrypt vault)
+2) Optionally store a wrapped fast‑unlock key in platform secure storage
+3) Sync:
+   - Host creates a session (PIN) and publishes a sealed offer
+   - Join resolves PIN, fetches offer, and publishes sealed answer
+   - Devices authenticate peers by Ed25519 public keys
+   - Manifest exchange decides whether to send or request vault
+   - Vault JSON sent over encrypted data channel
 
 ---
 
-## Threat model
-Defends against
-- Offline access to vault files without the password.
-- Parameter tampering for fast unlock (detected via HMAC‑SHA3‑512 signature).
-- Accidental corruption during saves (atomic writes, multi‑part files, backups).
-- Man‑in‑the‑middle attacks during P2P sync (end‑to‑end encryption, PIN verification).
-- Unauthorized sync connections (6‑digit PIN required for device pairing).
+## Security model
 
-Out of scope
-- Compromised endpoints (malware, keyloggers, memory forensics while running).
-- Side‑channel resistance beyond constant‑time MAC compares.
-- Network‑level attacks on local network infrastructure.
-- Advanced persistent threats with physical device access.
+- Encryption at rest: AES‑256‑GCM
+- Password KDF: Argon2id (calibrated); fast‑unlock also Argon2id with separate parameters
+- Integrity: AEAD tags; HMAC‑SHA3‑512 for verifier and tamper detection of fast‑params
+- Device trust: Ed25519 public key pinning; sync will warn on untrusted peers
+- Signaling privacy: Offer/Answer sealed with AES‑GCM using a key derived from PIN via Argon2id (server stores only sealed envelopes)
+- Transport: WebRTC DTLS/SRTP
 
-Operator cautions
-- Do not manually edit pwdb.meta.json. This can corrupt counters and risk nonce reuse.
-- Do not copy/move vault files while a save is in progress.
-- Only sync on trusted local networks. Verify the PIN matches on both devices before syncing.
-- If the wrong device connects, cancel the sync immediately.
+Operator guidance
+- Share only public keys; verify and add peers to trusted list before syncing
+- Use a new PIN for each pairing; PINs expire automatically
+- Prefer trusted networks; use TURN if NATs are restrictive
+- Clipboard handling exposes secrets to OS/global clipboard
 
 ---
 
-## Operational guidance
+## Requirements
 
-Default behavior
-- Vault creation location: prompts for folder; if not empty, a pwdb subfolder is created.
-- Parts: defaults to 3 parts for vault data.
-- Calibration: KDF parameters are tuned at runtime for the device; values are persisted in metadata.
-
-Configuration
-- Fast unlock disk fallback: disabled by default.
-  - To enable, construct StorageService with allowDiskWrappedKeyFallback: true. This writes derived.key next to the vault and sets 600 permissions on Unix-like systems.
-- Secure storage availability: subject to platform bindings and environment; if unavailable, fast unlock is skipped.
-
-Backup and restore
-- Backups (.bak) are created on each save. To restore, replace pwdb.enc.partN with the corresponding .bak files and keep metadata intact.
-- Keep multiple copies of your vault folder in offline storage for disaster recovery.
-
-Mobile considerations (Android)
-- Consider enabling device lock/biometrics and screen lock to improve protection while the app is running.
-- Clipboard contents are managed by the OS; clear it promptly if copying secrets is necessary.
-
-Known limitations
-- Secure storage availability varies by distro/environment. If unavailable, fast unlock is not used unless disk fallback is explicitly enabled.
-- Clipboard exposure of secrets is inherent to OS clipboards.
-
----
-
-## Device Synchronization
-
-Q‑Safe Vault includes secure peer‑to‑peer device synchronization for syncing vaults between devices on the same local network.
-
-### How it works
-1. Both devices must be connected to the same local network
-2. One device acts as the server (receiving), the other as client (sending)
-3. Server displays a 6‑digit verification PIN and its IP addresses
-4. Client enters the server's IP address and PIN to establish connection
-5. After verification, vault data is encrypted and transferred
-6. Received entries are merged with existing entries (by ID)
-
-### Security features
-- **End‑to‑end encryption**: Ephemeral X25519 key exchange (ECDH) generates a shared secret
-- **Device pairing**: 6‑digit PIN verified via HMAC‑SHA256
-- **Encrypted transport**: All vault data encrypted with AES‑256‑GCM using the shared secret
-- **No cloud/server**: Direct peer‑to‑peer connection only
-- **Timeout protection**: Sync sessions automatically expire after 5 minutes
-- **Verification**: Both devices must confirm the same PIN for pairing
-
-### Usage
-1. Open your vault on both devices
-2. On the receiving device, tap the sync button (sync icon in top toolbar)
-3. Choose "Receive from another device"
-4. Note the PIN and IP address displayed
-5. On the sending device, tap the sync button
-6. Choose "Send to another device"
-7. Enter the IP address and PIN from the receiving device
-8. Tap "Connect and Send"
-9. Verify the connection completes successfully
-
-### Merge strategy
-- Entries are merged by unique ID
-- If the same entry exists on both devices, the received version takes precedence
-- New entries from either device are added to the merged vault
-- After sync, save the vault to persist changes
-
-### Network requirements
-- Both devices on the same local network (WiFi/LAN)
-- No firewall blocking port 48923
-- No NAT/router between devices (same subnet preferred)
-
-### Security considerations
-- Sync only on trusted networks (e.g., home WiFi)
-- Always verify the PIN matches on both devices before proceeding
-- The connection times out after 5 minutes for security
-- No data is stored on any intermediate server or cloud
-
----
-
-## Build, run, and test
-
-Prerequisites
-- Flutter SDK (stable), Dart SDK (as pinned by Flutter)
+- Flutter SDK (stable); Dart as included with Flutter
 - Platform toolchains:
   - Windows: Visual Studio with Desktop C++ workload
-  - Linux: GTK/Clang as required by Flutter desktop
-  - Android: Android Studio/SDK, device or emulator
+  - Linux: gtk3/clang toolchain as required by Flutter
+  - Android: Android Studio/SDK and a device/emulator
+- Optional: a rendezvous server for PIN pairing (HTTPS)
 
-Install deps
-- flutter pub get
+---
 
-Run (desktop/mobile/web)
+## Install and run
+
+Prebuilt binaries
+- See Releases for Windows installer, Linux .deb, Android APK/AAB.
+- Android: allow installing from unknown sources to sideload APK.
+
+Run from source (quick)
 - Windows: flutter run -d windows
 - Linux: flutter run -d linux
 - Android: flutter run -d android
-- Web (macOS with Arc browser):
-  ```bash
-  export CHROME_EXECUTABLE="/Applications/Arc.app/Contents/MacOS/Arc"
-  flutter run -d chrome
-  ```
+
+Web is not a primary target, but can be tried via: flutter run -d chrome
+
+---
+
+## Build from source
+
+Install deps
+- flutter pub get
 
 Build release
 - Windows: flutter build windows
@@ -222,51 +110,104 @@ Build release
 - Android (APK): flutter build apk --release
 - Android (AAB): flutter build appbundle --release
 
-Quality gates
-- Static analysis: dart analyze
-- Formatting: dart format --output=none --set-exit-if-changed .
-- Tests: flutter test
+CI/CD
+- See .github/workflows/flutter_build.yml for multi‑platform builds and release packaging.
 
 ---
 
-## Repository layout
-```
-/android      # Android
-/ios          # iOS (planned)
-/lib          # Flutter app source
-/linux        # Linux desktop embedding
-/macos        # macOS (planned)
-/public       # Assets
-/test         # Tests
-/web          # Web config (not primary target)
-/windows      # Windows desktop embedding
-pubspec.yaml  # Dependencies and config
-README.md     # This file
-```
+## Configuration
+
+Runtime configuration is via --dart-define.
+
+- QSV_SYNC_BASEURL: Base URL for the rendezvous (PIN) server
+  - Example: --dart-define=QSV_SYNC_BASEURL=https://qsafevault-server.vercel.app
+  - For local development: --dart-define=QSV_SYNC_BASEURL=http://localhost:3000
+
+Notes
+- All HTTP/HTTPS calls are logged at debug level (sanitized: PIN masked, ciphertext redacted).
+- Default timeouts: httpTimeout=8s, pollInterval≈800ms, pollMaxWait=180s.
 
 ---
 
-## Roadmap & status
-- [✅] Core vault storage and desktop/mobile UI
-- [✅] Calibrated Argon2id + AES‑256‑GCM
-- [✅] Optional fast unlock with secure storage and tamper detection
-- [✅] Atomic writes, backups, and file‑part storage
-- [✅] Android support
-- [✅] Direct P2P device synchronization (local network)
-- [❌] Third‑party security audit
-- [❌] PQ/hybrid cryptography
+## Device synchronization (PIN pairing)
+
+Prerequisites
+- Both devices open the Sync dialog
+- Exchange and add each other’s Ed25519 public key to “Trusted peers” (one‑time)
+
+Rendezvous server (required)
+- The app expects:
+  - POST /v1/sessions → { sessionId, pin, saltB64, ttlSec }
+  - GET /v1/sessions/resolve?pin=XXXXXX → { sessionId, saltB64, ttlSec }
+  - POST/GET /v1/sessions/{id}/offer → { envelope }
+  - POST/GET /v1/sessions/{id}/answer → { envelope }
+  - DELETE /v1/sessions/{id}
+- Offer/Answer envelopes are sealed; server stores no plaintext SDP or PIN.
+- See SERVER_API_SPEC.md for schema details and examples.
+
+How to sync
+- Host:
+  - Open Sync dialog → Start pairing → a PIN appears with TTL
+  - Wait; the app publishes a sealed offer automatically
+- Join:
+  - Enter the PIN → the app resolves, polls for offer, then publishes the sealed answer
+- Both:
+  - The data channel opens; devices authenticate public keys
+  - Manifest exchange decides direction; vault is sent automatically
+
+Troubleshooting
+- PIN not found or expired
+  - Generate a new PIN (host) and re‑enter (join)
+- “Answer not received before timeout”
+  - Check that the join device posted the answer within TTL; ensure STUN/TURN reachability
+- Flaky pairing
+  - Ensure the joiner resolves once and polls /offer (the app does this by default)
+- Untrusted peer
+  - Add the displayed public key to your trusted list and retry
 
 ---
 
-## Responsible disclosure
-Please report security issues privately. Open a GitHub Security Advisory or contact the maintainer via issue for a secure channel. Do not file public issues for vulnerabilities.
+## Logging and diagnostics
+
+- Sync HTTP logs: prefix [rv] (RendezvousClient)
+  - Requests and responses are printed with masked PIN and redacted ciphertext
+  - Polling logs include start/timeout markers
+- App events (SyncService):
+  - LocalDescriptionReadyEvent, PeerAuthenticatedEvent, HandshakeCompleteEvent
+  - ManifestReceivedEvent, VaultRequestedEvent, VaultReceivedEvent
+
+Windows console
+- The Windows runner opens a console when run under a debugger; logs are printed there.
 
 ---
 
-## License
-Creative Commons Attribution‑NonCommercial 4.0 International (CC BY‑NC 4.0).
+## Contributing
+
+- Issues and PRs are welcome for bug reports, documentation, and non‑commercial improvements.
+- Security issues: please report privately (see Responsible disclosure).
 
 ---
 
-## Contact
-Open an issue for questions or suggestions. Contributions via PRs and issues are welcome.
+## Roadmap
+
+- [Done] Core vault and desktop/mobile UI
+- [Done] AES‑256‑GCM + Argon2id (calibrated)
+- [Done] Fast unlock via secure storage (optional)
+- [Done] Atomic writes, backups, multi‑part storage
+- [Done] WebRTC sync with PIN rendezvous and device trust
+- [Planned] macOS/iOS support
+- [Planned] Third‑party security audit
+- [Planned] PQ/hybrid crypto options
+
+---
+
+## License and acknowledgements
+
+License
+- Creative Commons Attribution‑NonCommercial 4.0 International (CC BY‑NC 4.0). See LICENSE.
+
+Acknowledgements
+- cryptography, pointycastle, flutter_secure_storage, flutter_webrtc and the Flutter ecosystem.
+- WebRTC STUN servers and any TURN infrastructure you configure.
+
+---

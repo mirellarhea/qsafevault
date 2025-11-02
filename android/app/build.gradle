@@ -1,0 +1,86 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+// Fallbacks for version if not provided by Flutter tooling
+def flutterVersionCode = project.hasProperty('flutterVersionCode') ? project.flutterVersionCode : '1'
+def flutterVersionName = project.hasProperty('flutterVersionName') ? project.flutterVersionName : '1.0'
+
+android {
+    namespace "com.aimatochysia.qsafevault"
+    compileSdkVersion flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
+
+    defaultConfig {
+        applicationId "com.aimatochysia.qsafevault"
+        minSdkVersion 24
+        targetSdkVersion flutter.targetSdkVersion
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreProperties.containsKey('storeFile')
+                    && keystoreProperties.containsKey('storePassword')
+                    && keystoreProperties.containsKey('keyAlias')
+                    && keystoreProperties.containsKey('keyPassword')) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
+    // Compute if keystore is available
+    def hasKeystore = keystorePropertiesFile.exists() &&
+            keystoreProperties.containsKey('storeFile') &&
+            keystoreProperties.containsKey('storePassword') &&
+            keystoreProperties.containsKey('keyAlias') &&
+            keystoreProperties.containsKey('keyPassword')
+
+    buildTypes {
+        release {
+            if (hasKeystore) {
+                signingConfig signingConfigs.release
+            } else {
+                println("No key.properties found. Building unsigned release APK/AAB.")
+            }
+            // Shrink/obfuscate if desired:
+            // minifyEnabled true
+            // proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            // Use default debug signing. Do not force release signing here.
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    packagingOptions {
+        resources {
+            excludes += [ 'META-INF/AL2.0', 'META-INF/LGPL2.1' ]
+        }
+    }
+}
+
+// Dependencies are managed by Flutter; no manual entries typically required.
+// dependencies {
+//     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+// }

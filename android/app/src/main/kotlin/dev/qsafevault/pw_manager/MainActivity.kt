@@ -1,4 +1,4 @@
-package dev.qsafevault.qsafevault
+package com.aimatochysia.qsafevault
 
 import io.flutter.embedding.android.FlutterActivity
 

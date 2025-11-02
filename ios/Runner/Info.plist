@@ -47,5 +47,13 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>NSCameraUsageDescription</key>
+		<string>Camera access is used for device sync QR codes and WebRTC if needed.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Microphone access may be requested by WebRTC if needed.</string>
+		<key>NSLocalNetworkUsageDescription</key>
+		<string>Local network access is used to establish direct device sync connections.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Photo library access allows selecting an image with a QR code to join sync.</string>
 	</dict>
 </plist>

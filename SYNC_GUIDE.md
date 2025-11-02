@@ -1,130 +1,89 @@
-# Device Synchronization Example Usage
+# Device Sync (PIN) Guide
 
-## Overview
-This document provides examples of how to use the device synchronization feature in Q-Safe Vault.
+Audience
+- End users performing device-to-device sync.
+- Operators running the rendezvous server.
 
-## Basic Usage Flow
+What this covers
+- PIN pairing flow, prerequisites, expected logs, and targeted troubleshooting.
 
-### Scenario: Syncing from Phone to Computer
+## Prerequisites
+- Both devices have Q‑Safe Vault installed and a vault open.
+- Trusted peers: Exchange device public keys (base64) and add them to each other’s trusted list (one‑time).
+- Rendezvous server: App configured with QSV_SYNC_BASEURL (HTTPS preferred).
+  - Example run: --dart-define=QSV_SYNC_BASEURL=https://qsafevault-server.vercel.app
 
-#### On Computer (Receiving Device):
-1. Open Q-Safe Vault and unlock your vault
-2. Click the sync icon (⟳) in the top toolbar
-3. Select "Receive from another device"
-4. Note the PIN and IP address displayed (e.g., PIN: 123456, IP: 192.168.1.100)
-5. Wait for the connection...
+## Quick Start
 
-#### On Phone (Sending Device):
-1. Open Q-Safe Vault and unlock your vault
-2. Tap the sync icon (⟳) in the top toolbar
-3. Select "Send to another device"
-4. Enter the IP address from the computer: `192.168.1.100`
-5. Enter the PIN from the computer: `123456`
-6. Tap "Connect and Send"
-7. Wait for sync to complete
+Host (Device A)
+1) Open Sync dialog → Select “Host” → Start pairing.
+2) A 6–8 digit PIN appears with a short TTL; share the PIN verbally.
+3) Wait. The app publishes a sealed offer and waits for the answer.
 
-#### After Sync:
-- Both devices will have merged vault entries
-- Any new entries are added
-- Updated entries from the sender take precedence
-- Don't forget to save on the receiving device!
+Join (Device B)
+1) Open Sync dialog → Select “Join” → Enter the PIN → Join.
+2) The app resolves the PIN and polls for the host’s offer.
+3) It creates an answer and publishes it back.
+4) After the channel opens, peers authenticate and sync proceeds.
 
-## Security Best Practices
+Identity verification
+- After the channel opens, confirm the last 4 chars of device IDs match on both devices.
+- If warned “Untrusted peer”, add the displayed public key to your trusted list and retry.
 
-### Network Security
-- ✅ Only sync on trusted networks (home WiFi, not public WiFi)
-- ✅ Verify you're on the same local network
-- ✅ Check that both devices show the same PIN before connecting
-- ❌ Don't sync over public networks or untrusted WiFi
-- ❌ Don't share your PIN with anyone
+## What to expect in logs (debug)
+- Joiner:
+  - [rv] GET /v1/sessions/resolve → 200 once
+  - [rv] pollOffer start … → repeated GET /offer 404 offer_not_set, then 200
+  - [rv] POST /v1/sessions/{id}/answer → 200
+- Host:
+  - [rv] POST /v1/sessions → 200
+  - [rv] POST /v1/sessions/{id}/offer → 200
+  - [rv] pollAnswer start … → GET /answer 200 shortly after join’s POST
+- App events:
+  - PeerAuthenticatedEvent → HandshakeCompleteEvent → Manifest/Vault exchange
 
-### PIN Verification
-The 6-digit PIN is crucial for security:
-- Generated randomly on the server device
-- Used to verify the client is connecting to the right device
-- Prevents man-in-the-middle attacks
-- Only valid for 5 minutes
-- **Limited to 3 attempts** - connection blocked after 3 failed PIN entries
-- Must be exactly 6 digits (all numbers)
+Note: Logs mask PIN and redact ciphertext. That’s expected.
 
-### Troubleshooting
+## Troubleshooting
 
-#### "Connection timeout"
-- Ensure both devices are on the same network
-- Check firewall isn't blocking port 48923
-- Verify the IP address is correct
-- Make sure the receiving device is still waiting
+Common errors and fixes
+- 404 pin_not_found
+  - The PIN is wrong or the session was already resolved and deleted. Generate a new PIN on host and re-enter.
+- 410 session_expired / PIN expired
+  - TTL elapsed. Restart pairing and use the new PIN.
+- 404 offer_not_set (Joiner while polling /offer)
+  - Normal until host has published the offer. The app will keep polling; just wait.
+- “Answer not received before timeout” (Host)
+  - Joiner didn’t post answer in time. Ensure the join device is online and within TTL; retry with a new PIN if needed.
+- Untrusted peer
+  - Add the displayed public key to your trusted list, then retry pairing.
+- Flaky pairing or no channel open
+  - Ensure STUN reachability on both devices. Add TURN if behind restrictive NATs (symmetric NAT/corporate networks).
 
-#### "Invalid PIN"
-- Double-check you entered the correct PIN
-- PIN must be exactly 6 digits
-- You have 3 attempts before the connection is blocked
-- If blocked, restart the sync process on both devices
+Network tips
+- STUN: stun:stun.l.google.com:19302 is used by default.
+- TURN: If your environment is restrictive, configure TURN on both devices (app code) and ensure credentials are valid.
 
-#### "Maximum PIN attempts exceeded"
-- The connection was blocked after 3 failed PIN entries
-- This is a security feature to prevent brute-force attacks
-- Close the sync dialog on both devices
-- Start a new sync session with the correct PIN
+## Security & Privacy
 
-#### "Network error"
-- Check WiFi is enabled on both devices
-- Ensure they're connected to the same network
-- Restart the sync process
-- Try a different network if available
+- No plaintext SDP or PIN ever stored on the rendezvous server; Offer/Answer are sealed with a PIN‑derived key (Argon2id + AES‑GCM).
+- WebRTC data channel is protected by DTLS; vault remains AES‑256‑GCM encrypted at rest.
+- Only share public keys; never share private keys.
+- Use a new PIN per pairing; sessions are single‑use and time‑limited.
 
-#### "Merge conflicts"
-- The sync uses ID-based merging
-- Newer entries (from sender) take precedence
-- Check your entries after sync
-- You can manually delete duplicates if needed
+## Server expectations (summary)
 
-## Technical Details
+Endpoints
+- POST /v1/sessions → { sessionId, pin, saltB64, ttlSec }
+- GET /v1/sessions/resolve?pin=XXXXXX → { sessionId, saltB64, ttlSec }
+- POST/GET /v1/sessions/{id}/offer → { envelope }
+- POST/GET /v1/sessions/{id}/answer → { envelope }
+- DELETE /v1/sessions/{id}
 
-### Encryption
-- Key Exchange: X25519 (ECDH)
-- Symmetric Encryption: AES-256-GCM
-- PIN Hashing: HMAC-SHA256
-- Nonce: Randomly generated per encryption
-- Public Key Validation: 32-byte length check
+Behavior
+- Keep PIN→session mapping valid after resolve; do not delete on first resolve.
+- Return 404 for unset offer/answer, 410 for expired sessions, 429 for rate limits.
+- Store only sealed envelopes (no plaintext SDP/PIN), enforce TTL and rate limits.
 
-### Network
-- Protocol: TCP
-- Port: 48923
-- Scope: Local network only
-- Timeout: 5 minutes
-- Rate Limiting: 3 PIN attempts maximum
-
-### Data Transfer
-- Format: JSON (encrypted)
-- Max size: 100MB
-- Compression: None (already encrypted)
-- Integrity: Verified via AEAD MAC
-- Input Validation: PIN format and length, public key size
-
-## Privacy Notice
-
-- No data is sent to the cloud or any server
-- All communication is peer-to-peer
-- Only the two syncing devices can decrypt the data
-- The shared encryption key is ephemeral (never stored)
-- After sync completes, the connection is closed
-
-## Limitations
-
-- Both devices must be online simultaneously
-- Must be on the same local network
-- Requires manual initiation on both devices
-- No automatic background sync
-- No conflict resolution UI (automatic merge only)
-
-## Support
-
-For issues or questions:
-1. Check the main README.md
-2. Review the troubleshooting section above
-3. Open an issue on GitHub with:
-   - Device types (e.g., Windows to Android)
-   - Error messages
-   - Network configuration
-   - Steps to reproduce
+Notes
+- The README has a high‑level overview; this guide focuses on practical usage and troubleshooting for PIN pairing.

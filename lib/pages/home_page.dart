@@ -161,29 +161,23 @@ class _HomePageState extends State<HomePage> {
     );
   }
   
-  void _openSyncDialog() {
+  Future<void> _openSyncDialog() async {
     showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => SyncDialog(
         currentVaultJson: PasswordEntry.listToJson(_entries),
         onReceiveData: (vaultJson) {
           try {
             final receivedEntries = PasswordEntry.listFromJson(vaultJson);
             setState(() {
-              // Merge strategy: combine entries, with received data taking precedence
               final mergedEntries = <String, PasswordEntry>{};
-              
-              // Add existing entries
               for (final entry in _entries) {
                 mergedEntries[entry.id] = entry;
               }
-              
-              // Add/update with received entries
               for (final entry in receivedEntries) {
                 mergedEntries[entry.id] = entry;
               }
-              
               _entries = mergedEntries.values.toList();
             });
             _saveToDisk();
