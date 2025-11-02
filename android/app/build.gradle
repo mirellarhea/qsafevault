@@ -16,8 +16,10 @@ def flutterVersionName = project.hasProperty('flutterVersionName') ? project.flu
 
 android {
     namespace "com.aimatochysia.qsafevault"
-    compileSdkVersion flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    // Ensure plugin compatibility (backward compatible at runtime).
+    compileSdkVersion 36
+    compileSdk 36
+    ndkVersion "27.0.12077973"
 
     defaultConfig {
         applicationId "com.aimatochysia.qsafevault"

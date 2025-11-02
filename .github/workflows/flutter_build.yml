@@ -181,9 +181,9 @@ jobs:
           Set-Content -Path $issPath -Value $iss -Encoding UTF8
           Write-Host "Generated: $issPath"
       - name: Create Windows Installer (Inno Setup)
+        shell: pwsh
         run: |
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "$env:RUNNER_TEMP\installer.iss"
-        shell: cmd
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "$env:RUNNER_TEMP\installer.iss"
       - name: Collect installer artifact
         shell: pwsh
         run: |
