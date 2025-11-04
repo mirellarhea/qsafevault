@@ -75,7 +75,7 @@ class RendezvousClient {
   }
 
   Future<_CreateSessionResp> createSession() async {
-    final uri = _u('/v1/sessions');
+    final uri = _u('/api/v1/sessions');
     _logReq('POST', uri);
     final resp = await _http
         .post(uri, headers: {'content-type': 'application/json'})
@@ -95,14 +95,15 @@ class RendezvousClient {
   }
 
   Future<_ResolveResp> resolveByPin(String pin) async {
-    final uri = _u('/v1/sessions/resolve', {'pin': '******'});
+    final uri = _u('/api/v1/sessions/resolve', {'pin': '******'});
     _logReq('GET', uri);
-    final realUri = _u('/v1/sessions/resolve', {'pin': pin});
+    final realUri = _u('/api/v1/sessions/resolve', {'pin': pin});
     final resp = await _http.get(realUri).timeout(config.httpTimeout);
     if (resp.statusCode == 404 || resp.statusCode == 410) {
       _logRes('GET', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     if (resp.statusCode != 200) {
       _logRes('GET', uri, resp);
@@ -121,7 +122,7 @@ class RendezvousClient {
     required String sessionId,
     required Map<String, dynamic> envelope,
   }) async {
-    final uri = _u('/v1/sessions/$sessionId/offer');
+    final uri = _u('/api/v1/sessions/$sessionId/offer');
     _logReq('POST', uri, body: _redactEnvelopeWrapper({'envelope': envelope}));
     final resp = await _http
         .post(uri, headers: {'content-type': 'application/json'}, body: jsonEncode({'envelope': envelope}))
@@ -129,13 +130,14 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('POST', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     _logRes('POST', uri, resp, asJson: {});
   }
 
   Future<Map<String, dynamic>?> getOffer(String sessionId) async {
-    final uri = _u('/v1/sessions/$sessionId/offer');
+    final uri = _u('/api/v1/sessions/$sessionId/offer');
     _logReq('GET', uri);
     final resp = await _http.get(uri).timeout(config.httpTimeout);
     if (resp.statusCode == 404 || resp.statusCode == 410) {
@@ -145,7 +147,8 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('GET', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     final obj = jsonDecode(resp.body) as Map<String, dynamic>;
     _logRes('GET', uri, resp, asJson: _redactEnvelopeWrapper(obj));
@@ -156,7 +159,7 @@ class RendezvousClient {
     required String sessionId,
     required Map<String, dynamic> envelope,
   }) async {
-    final uri = _u('/v1/sessions/$sessionId/answer');
+    final uri = _u('/api/v1/sessions/$sessionId/answer');
     _logReq('POST', uri, body: _redactEnvelopeWrapper({'envelope': envelope}));
     final resp = await _http
         .post(uri, headers: {'content-type': 'application/json'}, body: jsonEncode({'envelope': envelope}))
@@ -164,13 +167,14 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('POST', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     _logRes('POST', uri, resp, asJson: {});
   }
 
   Future<Map<String, dynamic>?> getAnswer(String sessionId) async {
-    final uri = _u('/v1/sessions/$sessionId/answer');
+    final uri = _u('/api/v1/sessions/$sessionId/answer');
     _logReq('GET', uri);
     final resp = await _http.get(uri).timeout(config.httpTimeout);
     if (resp.statusCode == 404 || resp.statusCode == 410) {
@@ -180,7 +184,8 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('GET', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     final obj = jsonDecode(resp.body) as Map<String, dynamic>;
     _logRes('GET', uri, resp, asJson: _redactEnvelopeWrapper(obj));
@@ -188,7 +193,7 @@ class RendezvousClient {
   }
 
   Future<void> closeSession(String sessionId) async {
-    final uri = _u('/v1/sessions/$sessionId');
+    final uri = _u('/api/v1/sessions/$sessionId');
     _logReq('DELETE', uri);
     final resp = await _http.delete(uri).timeout(config.httpTimeout);
     _logRes('DELETE', uri, resp);
