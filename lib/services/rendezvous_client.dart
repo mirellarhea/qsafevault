@@ -102,7 +102,8 @@ class RendezvousClient {
     if (resp.statusCode == 404 || resp.statusCode == 410) {
       _logRes('GET', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     if (resp.statusCode != 200) {
       _logRes('GET', uri, resp);
@@ -129,7 +130,8 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('POST', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     _logRes('POST', uri, resp, asJson: {});
   }
@@ -145,7 +147,8 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('GET', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     final obj = jsonDecode(resp.body) as Map<String, dynamic>;
     _logRes('GET', uri, resp, asJson: _redactEnvelopeWrapper(obj));
@@ -164,7 +167,8 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('POST', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     _logRes('POST', uri, resp, asJson: {});
   }
@@ -180,7 +184,8 @@ class RendezvousClient {
     if (resp.statusCode != 200) {
       _logRes('GET', uri, resp);
       final obj = _safeDecode(resp.body);
-      throw RendezvousHttpException(resp.statusCode, code: obj?['error']?['code'], message: obj?['error']?['message']);
+      final error = obj?['error'];
+      throw RendezvousHttpException(resp.statusCode, code: error is String ? error : null, message: error?.toString());
     }
     final obj = jsonDecode(resp.body) as Map<String, dynamic>;
     _logRes('GET', uri, resp, asJson: _redactEnvelopeWrapper(obj));

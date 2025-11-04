@@ -71,12 +71,16 @@ class _SyncDialogState extends State<SyncDialog> {
   void _onEvent(SyncEvent e) async {
     if (!mounted) return;
     if (e is HandshakeCompleteEvent) {
-      setState(() => _status = 'Secure Connection Established');
+      setState(() {
+        _status = 'Secure Connection Established';
+        _joining = false;
+      });
       await _sync.sendManifest(widget.currentVaultJson);
     } else if (e is UntrustedPeerEvent) {
       setState(() {
         _status = 'Untrusted peer. Add their code to trusted peers.';
         _error = 'Untrusted peer public key: ${e.pubKeyB64}';
+        _joining = false;
       });
     } else if (e is PeerAuthenticatedEvent) {
       setState(() {
@@ -108,6 +112,7 @@ class _SyncDialogState extends State<SyncDialog> {
       setState(() {
         _error = e.message;
         _status = 'Error';
+        _joining = false;
       });
     }
   }
