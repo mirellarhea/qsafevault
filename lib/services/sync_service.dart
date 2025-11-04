@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -27,12 +28,33 @@ class JoinOffer {
 }
 
 class SyncService {
-  static const _rtcConfig = {
-    'iceServers': [
-      {'urls': ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478']},
-    ],
-    'sdpSemantics': 'unified-plan',
-  };
+  Map<String, dynamic> _buildRtcConfig() {
+    final cfg = SyncConfig.defaults();
+    final iceServers = <Map<String, dynamic>>[
+      {
+        'urls': [
+          'stun:stun.l.google.com:19302',
+          'stun:global.stun.twilio.com:3478',
+        ]
+      },
+    ];
+    if (cfg.turnUrls.isNotEmpty &&
+        (cfg.turnUsername?.isNotEmpty ?? false) &&
+        (cfg.turnCredential?.isNotEmpty ?? false)) {
+      iceServers.add({
+        'urls': cfg.turnUrls,
+        'username': cfg.turnUsername,
+        'credential': cfg.turnCredential,
+      });
+    }
+    return <String, dynamic>{
+      'iceServers': iceServers,
+      'sdpSemantics': 'unified-plan',
+      'iceTransportPolicy': 'all',
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
+    };
+  }
 
   static const _kDevicePrivKey = 'device.ed25519.priv';
   static const _kDevicePubKey = 'device.ed25519.pub';
@@ -54,6 +76,26 @@ class SyncService {
   String? _remotePubKeyB64;
   bool _channelOpen = false;
 
+  IOSink? _sink;
+  void _ensureSink() {
+    if (!Platform.isWindows || _sink != null) return;
+    try {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      _sink = File('$exeDir${Platform.pathSeparator}qsafevault-sync.log').openWrite(mode: FileMode.append);
+    } catch (_) {
+      try {
+        _sink = File('${Directory.systemTemp.path}${Platform.pathSeparator}qsafevault-sync.log').openWrite(mode: FileMode.append);
+      } catch (_) {}
+    }
+  }
+  void _logSync(String msg) {
+    try {
+      final line = '[webrtc] ${DateTime.now().toIso8601String()} $msg';
+      print(line);
+      _ensureSink();
+      _sink?.writeln(line);
+    } catch (_) {}
+  }
 
   Stream<SyncEvent>? get events => _events?.stream;
 
@@ -183,27 +225,44 @@ class SyncService {
 
   Future<void> _ensurePcAndChannel({required bool isOfferer}) async {
     if (_pc != null) return;
-    _pc = await createPeerConnection(_rtcConfig);
+    _pc = await createPeerConnection(_buildRtcConfig());
+    _logSync('PeerConnection created (offerer=$isOfferer)');
 
     if (isOfferer) {
       final init = RTCDataChannelInit()..ordered = true;
       _dc = await _pc!.createDataChannel('sync', init);
+      _logSync('DataChannel created (label=${_dc?.label})');
       _wireDataChannel(_dc!);
     } else {
       _pc!.onDataChannel = (ch) {
         _dc = ch;
+        _logSync('DataChannel received (label=${_dc?.label})');
         _wireDataChannel(ch);
       };
     }
 
-    _pc!.onIceConnectionState = (state) {
+    _pc!.onIceConnectionState = (state) async {
+      _logSync('ICE state: $state');
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        try {
+          await _pc?.restartIce();
+          _logSync('ICE restart invoked');
+          _events?.add(const ErrorEvent('ICE connection failed; attempting restart'));
+        } catch (_) {}
+      }
     };
     _pc!.onConnectionState = (state) {
+      _logSync('PC state: $state');
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        _events?.add(const ErrorEvent('Connection lost'));
+      }
     };
   }
 
   void _wireDataChannel(RTCDataChannel ch) {
     ch.onDataChannelState = (s) async {
+      _logSync('DC state: $s');
       if (s == RTCDataChannelState.RTCDataChannelOpen) {
         _channelOpen = true;
         status = SyncStatus.connected;
@@ -212,6 +271,7 @@ class SyncService {
       }
     };
     ch.onMessage = (RTCDataChannelMessage m) async {
+      _logSync('DC msg: ${m.isBinary ? 'binary' : 'text'} len=${m.text.length}');
       final obj = jsonDecode(m.text);
       switch (obj['type']) {
         case 'hello':
@@ -267,11 +327,12 @@ class SyncService {
       return c.future;
     }
     _pc!.onIceGatheringState = (s) {
+      _logSync('ICE gathering: $s');
       if (s == RTCIceGatheringState.RTCIceGatheringStateComplete && !c.isCompleted) {
         c.complete();
       }
     };
-    return c.future.timeout(const Duration(seconds: 10), onTimeout: () {
+    return c.future.timeout(const Duration(seconds: 20), onTimeout: () {
       if (!c.isCompleted) c.complete();
     });
   }

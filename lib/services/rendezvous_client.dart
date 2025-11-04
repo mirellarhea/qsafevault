@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
 import '../config/sync_config.dart';
@@ -22,6 +23,9 @@ class RendezvousClient {
 
   late final String _baseNoSlash;
 
+  IOSink? _sink;
+  String? _sinkPath;
+
   RendezvousClient({
     SyncConfig? config,
     http.Client? httpClient,
@@ -40,13 +44,61 @@ class RendezvousClient {
     return uri.replace(queryParameters: query);
   }
 
-  void _logReq(String method, Uri uri, {Object? body}) {
+  void _ensureSink() {
+    if (!Platform.isWindows || _sink != null) return;
+    try {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final p = '$exeDir${Platform.pathSeparator}qsafevault-sync.log';
+      _sink = File(p).openWrite(mode: FileMode.append);
+      _sinkPath = p;
+      _sink!.writeln('--- ${DateTime.now().toIso8601String()} START (exeDir) ---');
+    } catch (_) {
+      try {
+        final p = '${Directory.systemTemp.path}${Platform.pathSeparator}qsafevault-sync.log';
+        _sink = File(p).openWrite(mode: FileMode.append);
+        _sinkPath = p;
+        _sink!.writeln('--- ${DateTime.now().toIso8601String()} START (tmp) ---');
+      } catch (_) {
+      }
+    }
+  }
+
+  void _writeLog(String line) {
+    try {
+      _ensureSink();
+      if (_sink != null) {
+        _sink!.writeln(line);
+      }
+    } catch (_) {}
+  }
+
+  void _logReq(String method, Uri uri, {Object? body, Map<String, String>? headers}) {
+    try {
+      final hdr = headers == null ? '' : ' headers=${jsonEncode(headers)}';
+      final b = body == null ? '' : ' body=${_truncate(_toJsonString(body), 1024)}';
+      final line = '[rv] $method ${uri.toString()}$hdr$b';
+      print(line);
+      _writeLog(line);
+    } catch (_) {}
   }
 
   void _logRes(String method, Uri uri, http.Response resp, {Object? asJson}) {
+    try {
+      final hdr = jsonEncode(resp.headers);
+      final bodyStr = asJson != null ? _toJsonString(asJson) : resp.body;
+      final redacted = _truncate(bodyStr, 2048);
+      final line = '[rv] ${resp.statusCode} $method ${uri.toString()} headers=$hdr body=$redacted';
+      print(line);
+      _writeLog(line);
+    } catch (_) {}
   }
 
   void _logInfo(String msg) {
+    try {
+      final line = '[rv] $msg';
+      print(line);
+      _writeLog(line);
+    } catch (_) {}
   }
 
   String _toJsonString(Object o) {
@@ -76,7 +128,7 @@ class RendezvousClient {
 
   Future<_CreateSessionResp> createSession() async {
     final uri = _u('/api/v1/sessions');
-    _logReq('POST', uri);
+    _logReq('POST', uri, headers: {'content-type': 'application/json'});
     final resp = await _http
         .post(uri, headers: {'content-type': 'application/json'})
         .timeout(config.httpTimeout);
@@ -123,7 +175,8 @@ class RendezvousClient {
     required Map<String, dynamic> envelope,
   }) async {
     final uri = _u('/api/v1/sessions/$sessionId/offer');
-    _logReq('POST', uri, body: _redactEnvelopeWrapper({'envelope': envelope}));
+    final red = _redactEnvelopeWrapper({'envelope': envelope});
+    _logReq('POST', uri, headers: {'content-type': 'application/json'}, body: red);
     final resp = await _http
         .post(uri, headers: {'content-type': 'application/json'}, body: jsonEncode({'envelope': envelope}))
         .timeout(config.httpTimeout);
@@ -160,7 +213,8 @@ class RendezvousClient {
     required Map<String, dynamic> envelope,
   }) async {
     final uri = _u('/api/v1/sessions/$sessionId/answer');
-    _logReq('POST', uri, body: _redactEnvelopeWrapper({'envelope': envelope}));
+    final red = _redactEnvelopeWrapper({'envelope': envelope});
+    _logReq('POST', uri, headers: {'content-type': 'application/json'}, body: red);
     final resp = await _http
         .post(uri, headers: {'content-type': 'application/json'}, body: jsonEncode({'envelope': envelope}))
         .timeout(config.httpTimeout);
