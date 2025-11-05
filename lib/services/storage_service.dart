@@ -74,40 +74,72 @@ class StorageService {
   List<int> _obfKey(String seed) =>
       crypto.sha256.convert(utf8.encode('QSV_OBF_V1|$seed')).bytes;
 
-  Uint8List _wrapContainerBytes(Uint8List zipBytes, String seed) {
-    final key = _obfKey(seed);
-    final out = Uint8List(zipBytes.length);
+  List<int> _obfV2Key(Uint8List salt) {
+    final tag = 'QSV_OBF_V2|${base64Encode(salt)}';
+    return crypto.sha256.convert(utf8.encode(tag)).bytes;
+  }
+
+  Uint8List _wrapContainerBytes(Uint8List zipBytes) {
+    final saltLen = 16;
+    final salt = Uint8List.fromList(List<int>.generate(saltLen, (_) => Random.secure().nextInt(256)));
+    final key = _obfV2Key(salt);
+    final xored = Uint8List(zipBytes.length);
     for (var i = 0; i < zipBytes.length; i++) {
-      out[i] = zipBytes[i] ^ key[i % key.length];
+      xored[i] = zipBytes[i] ^ key[i % key.length];
     }
     final outAll = BytesBuilder();
     outAll.add(_obfMagic);
-    outAll.add(out);
+    outAll.add([saltLen]);
+    outAll.add(salt);
+    outAll.add(xored);
     return Uint8List.fromList(outAll.toBytes());
   }
 
-  Uint8List _unwrapContainerBytes(Uint8List rawBytes, String seed) {
-    bool hasMagic = rawBytes.length >= _obfMagic.length;
-    if (hasMagic) {
-      for (var i = 0; i < _obfMagic.length; i++) {
-        if (rawBytes[i] != _obfMagic[i]) {
-          hasMagic = false;
-          break;
-        }
-      }
-    }
-    if (hasMagic) {
-      final body = rawBytes.sublist(_obfMagic.length);
-      final key = _obfKey(seed);
-      final out = Uint8List(body.length);
-      for (var i = 0; i < body.length; i++) {
-        out[i] = body[i] ^ key[i % key.length];
-      }
-      return out;
-    }
+  Uint8List _unwrapContainerBytes(Uint8List rawBytes, {String? legacySeed}) {
     if (rawBytes.length >= 2 && rawBytes[0] == 0x50 && rawBytes[1] == 0x4B) {
       return rawBytes;
     }
+
+    if (rawBytes.length >= _obfMagic.length) {
+      var magicOk = true;
+      for (var i = 0; i < _obfMagic.length; i++) {
+        if (rawBytes[i] != _obfMagic[i]) { magicOk = false; break; }
+      }
+      if (magicOk) {
+        if (rawBytes.length > _obfMagic.length + 1) {
+          final saltLen = rawBytes[_obfMagic.length];
+          final saltStart = _obfMagic.length + 1;
+          final xoredStart = saltStart + saltLen;
+          final plausible = saltLen > 0 && saltLen <= 64 && rawBytes.length > xoredStart;
+          if (plausible) {
+            final salt = rawBytes.sublist(saltStart, saltStart + saltLen);
+            final key = _obfV2Key(Uint8List.fromList(salt));
+            final body = rawBytes.sublist(xoredStart);
+            final out = Uint8List(body.length);
+            for (var i = 0; i < body.length; i++) {
+              out[i] = body[i] ^ key[i % key.length];
+            }
+            if (out.length >= 2 && out[0] == 0x50 && out[1] == 0x4B) return out;
+          }
+        }
+        final body = rawBytes.sublist(_obfMagic.length);
+        if (legacySeed != null && legacySeed.isNotEmpty) {
+          final key = _obfKey(legacySeed);
+          final out = Uint8List(body.length);
+          for (var i = 0; i < body.length; i++) {
+            out[i] = body[i] ^ key[i % key.length];
+          }
+          if (out.length >= 2 && out[0] == 0x50 && out[1] == 0x4B) {
+            return out;
+          }
+        }
+        throw Exception(
+          'Vault container uses a legacy path-bound wrapper. '
+          'Open on the original device/path and re-save to migrate to a portable format.'
+        );
+      }
+    }
+
     throw Exception('Invalid vault container format.');
   }
 
@@ -124,7 +156,7 @@ class StorageService {
     final file = File(vaultPath);
     final raw = await file.readAsBytes();
 
-    final zipped = _unwrapContainerBytes(raw, vaultPath);
+    final zipped = _unwrapContainerBytes(raw, legacySeed: vaultPath);
 
     final archive = ZipDecoder().decodeBytes(zipped, verify: true);
     final wdir = Directory(work);
@@ -156,7 +188,7 @@ class StorageService {
     }
     final zipped = encoder.encode(archive);
     if (zipped == null) throw Exception('Failed to create vault container.');
-    final wrapped = _wrapContainerBytes(Uint8List.fromList(zipped), vaultPath);
+    final wrapped = _wrapContainerBytes(Uint8List.fromList(zipped));
     final out = File(vaultPath);
     await out.writeAsBytes(wrapped, flush: true);
   }

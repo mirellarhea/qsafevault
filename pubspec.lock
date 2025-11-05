@@ -757,6 +757,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.6.8"
+  tor:
+    dependency: "direct main"
+    description:
+      name: tor
+      sha256: "0661ff34ca4354d1d2480a33086ccc8498ec6add426bfe2b38d392c9ad11c059"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.9"
   typed_data:
     dependency: transitive
     description:

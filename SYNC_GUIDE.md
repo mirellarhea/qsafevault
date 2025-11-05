@@ -107,3 +107,24 @@ Behavior
 
 Notes
 - The README has a high‑level overview; this guide focuses on practical usage and troubleshooting for PIN pairing.
+
+## Tor-based P2P sync (recommended)
+
+How it works
+- Each device launches Tor in the background and exposes a local SOCKS5 proxy (127.0.0.1:<socksPort>).
+- The app starts a local sync server bound to 127.0.0.1:<localSyncPort>.
+- Tor creates a hidden service mapping <onionHost>:5000 to 127.0.0.1:<localSyncPort>.
+- The app registers userId/deviceId → <onionHost>:5000 on the existing Vercel + Redis backend.
+- Other devices for the same user fetch the device list, pick a target, and connect over Tor
+  (SOCKS5 CONNECT 127.0.0.1:<socksPort> → http://<onionHost>:5000/sync), exchanging only encrypted payloads.
+
+Security
+- No password DB leaves devices unencrypted.
+- Payloads are end-to-end encrypted (Argon2id-derived key + AES-GCM/ChaCha20-Poly1305).
+- The backend stores only userId/deviceId → onion endpoint metadata.
+
+Operator notes
+- No STUN/TURN needed; Tor traverses NATs/firewalls automatically.
+- Backend endpoints:
+  - POST /v1/devices { userId, deviceId, onion, port, ttlSec }
+  - GET  /v1/devices/{userId} → { devices: [{ deviceId, onion, port }] }
