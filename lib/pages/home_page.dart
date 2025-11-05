@@ -7,6 +7,11 @@ import 'package:cryptography/cryptography.dart';
 import '/widgets/entry_form.dart';
 import '/widgets/sync_dialog.dart';
 import 'package:qsafevault/services/theme_service.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:convert';
+import 'dart:io';
+import '../services/app_logger.dart';
 class HomePage extends StatefulWidget {
   final StorageService storage;
   final CryptoService cryptoService;
@@ -28,6 +33,7 @@ class _HomePageState extends State<HomePage> {
   late List<PasswordEntry> _entries;
   String _searchQuery = "";
   bool _saving = false;
+  String? _logDir;
   @override
   void initState() {
     super.initState();
@@ -35,6 +41,46 @@ class _HomePageState extends State<HomePage> {
       _entries = PasswordEntry.listFromJson(widget.initialJson);
     } catch (_) {
       _entries = [];
+    }
+    _loadLogDir();
+  }
+  Future<void> _loadLogDir() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final f = File('${docs.path}/logdir.txt');
+      if (await f.exists()) {
+        final p = (await f.readAsString()).trim();
+        if (p.isNotEmpty) {
+          final ok = await AppLogger.instance.setDirectory(p);
+          if (ok) setState(() => _logDir = p);
+        }
+      }
+    } catch (_) {}
+  }
+  Future<void> _saveLogDir(String p) async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final f = File('${docs.path}/logdir.txt');
+      await f.writeAsString(p, flush: true);
+    } catch (_) {}
+  }
+  Future<void> _chooseLogFolder() async {
+    try {
+      final picked = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select log output folder');
+      if (picked == null || picked.isEmpty) return;
+      final ok = await AppLogger.instance.setDirectory(picked);
+      if (!ok) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to set log folder')));
+        return;
+      }
+      await _saveLogDir(picked);
+      if (!mounted) return;
+      setState(() => _logDir = picked);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Logging to: $picked/${AppLogger.instance.logFileName}')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Log folder error: $e')));
     }
   }
   List<PasswordEntry> get _filteredEntries {
@@ -301,6 +347,11 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.sync),
             onPressed: _openSyncDialog,
           ),
+          IconButton(
+            tooltip: 'Select log folder',
+            icon: const Icon(Icons.folder),
+            onPressed: _chooseLogFolder,
+          ),
           IconButton(onPressed: _addEntry, icon: const Icon(Icons.add)),
           IconButton(
             onPressed: _saveToDisk,
@@ -315,11 +366,32 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       body: _filteredEntries.isEmpty
-          ? const Center(child: Text("No entries found"))
-          : ListView.separated(
-              itemCount: _filteredEntries.length,
-              separatorBuilder: (_, __) => const Divider(),
-              itemBuilder: (_, i) => _row(_filteredEntries[i]),
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Center(child: Text("No entries found")),
+                const SizedBox(height: 12),
+                if (_logDir != null)
+                  Text('Log: $_logDir/${AppLogger.instance.logFileName}',
+                      style: Theme.of(context).textTheme.bodySmall),
+              ],
+            )
+          : Column(
+              children: [
+                if (_logDir != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6.0),
+                    child: Text('Log: $_logDir/${AppLogger.instance.logFileName}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: _filteredEntries.length,
+                    separatorBuilder: (_, __) => const Divider(),
+                    itemBuilder: (_, i) => _row(_filteredEntries[i]),
+                  ),
+                ),
+              ],
             ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _deleteDerivedKey,

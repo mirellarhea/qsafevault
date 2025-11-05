@@ -9,6 +9,7 @@ import 'package:meta/meta.dart';
 import '../config/sync_config.dart';
 import 'rendezvous_client.dart';
 import 'package:qsafevault/services/secure_storage.dart';
+import 'app_logger.dart';
 
 @immutable
 class PinSession {
@@ -77,24 +78,10 @@ class SyncService {
   String? _remotePubKeyB64;
   bool _channelOpen = false;
 
-  IOSink? _sink;
-  void _ensureSink() {
-    if (!Platform.isWindows || _sink != null) return;
-    try {
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
-      _sink = File('$exeDir${Platform.pathSeparator}qsafevault-sync.log').openWrite(mode: FileMode.append);
-    } catch (_) {
-      try {
-        _sink = File('${Directory.systemTemp.path}${Platform.pathSeparator}qsafevault-sync.log').openWrite(mode: FileMode.append);
-      } catch (_) {}
-    }
-  }
   void _logSync(String msg) {
     try {
       final line = '[webrtc] ${DateTime.now().toIso8601String()} $msg';
-      print(line);
-      _ensureSink();
-      _sink?.writeln(line);
+      AppLogger.instance.write(line);
     } catch (_) {}
   }
 

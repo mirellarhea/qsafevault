@@ -6,6 +6,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
 import '../config/sync_config.dart';
 import '../services/crypto_service.dart';
+import 'app_logger.dart';
 
 class RendezvousHttpException implements Exception {
   final int statusCode;
@@ -22,9 +23,6 @@ class RendezvousClient {
   final CryptoService _crypto;
 
   late final String _baseNoSlash;
-
-  IOSink? _sink;
-  String? _sinkPath;
 
   RendezvousClient({
     SyncConfig? config,
@@ -44,41 +42,12 @@ class RendezvousClient {
     return uri.replace(queryParameters: query);
   }
 
-  void _ensureSink() {
-    if (!Platform.isWindows || _sink != null) return;
-    try {
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
-      final p = '$exeDir${Platform.pathSeparator}qsafevault-sync.log';
-      _sink = File(p).openWrite(mode: FileMode.append);
-      _sinkPath = p;
-      _sink!.writeln('--- ${DateTime.now().toIso8601String()} START (exeDir) ---');
-    } catch (_) {
-      try {
-        final p = '${Directory.systemTemp.path}${Platform.pathSeparator}qsafevault-sync.log';
-        _sink = File(p).openWrite(mode: FileMode.append);
-        _sinkPath = p;
-        _sink!.writeln('--- ${DateTime.now().toIso8601String()} START (tmp) ---');
-      } catch (_) {
-      }
-    }
-  }
-
-  void _writeLog(String line) {
-    try {
-      _ensureSink();
-      if (_sink != null) {
-        _sink!.writeln(line);
-      }
-    } catch (_) {}
-  }
-
   void _logReq(String method, Uri uri, {Object? body, Map<String, String>? headers}) {
     try {
       final hdr = headers == null ? '' : ' headers=${jsonEncode(headers)}';
       final b = body == null ? '' : ' body=${_truncate(_toJsonString(body), 1024)}';
       final line = '[rv] $method ${uri.toString()}$hdr$b';
-      print(line);
-      _writeLog(line);
+      AppLogger.instance.write(line);
     } catch (_) {}
   }
 
@@ -88,16 +57,14 @@ class RendezvousClient {
       final bodyStr = asJson != null ? _toJsonString(asJson) : resp.body;
       final redacted = _truncate(bodyStr, 2048);
       final line = '[rv] ${resp.statusCode} $method ${uri.toString()} headers=$hdr body=$redacted';
-      print(line);
-      _writeLog(line);
+      AppLogger.instance.write(line);
     } catch (_) {}
   }
 
   void _logInfo(String msg) {
     try {
       final line = '[rv] $msg';
-      print(line);
-      _writeLog(line);
+      AppLogger.instance.write(line);
     } catch (_) {}
   }
 
