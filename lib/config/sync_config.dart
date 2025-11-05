@@ -9,6 +9,7 @@ class SyncConfig {
   final List<String> turnUrls;
   final String? turnUsername;
   final String? turnCredential;
+  final bool turnForceRelay;
 
   const SyncConfig({
     required this.baseUrl,
@@ -19,23 +20,32 @@ class SyncConfig {
     this.turnUrls = const [],
     this.turnUsername,
     this.turnCredential,
+    this.turnForceRelay = false,
   });
 
-  static SyncConfig defaults() => SyncConfig(
-        baseUrl: const String.fromEnvironment(
-          'QSV_SYNC_BASEURL',
-          defaultValue: 'https://qsafevault-server.vercel.app',
-        ),
-        turnUrls: const String.fromEnvironment('QSV_TURN_URLS', defaultValue: '')
-            .split(',')
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
-            .toList(),
-        turnUsername: const String.fromEnvironment('QSV_TURN_USERNAME', defaultValue: '')
-            .trim(),
-        turnCredential: const String.fromEnvironment('QSV_TURN_CREDENTIAL', defaultValue: '')
-            .trim(),
-      );
+  static SyncConfig defaults() {
+    final base = const String.fromEnvironment(
+      'QSV_SYNC_BASEURL',
+      defaultValue: 'https://qsafevault-server.vercel.app',
+    );
+    final turnUrls = const String.fromEnvironment('QSV_TURN_URLS', defaultValue: '')
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final turnUser = const String.fromEnvironment('QSV_TURN_USERNAME', defaultValue: '').trim();
+    final turnCred = const String.fromEnvironment('QSV_TURN_CREDENTIAL', defaultValue: '').trim();
+    final forceRelayRaw = const String.fromEnvironment('QSV_TURN_FORCE_RELAY', defaultValue: 'false');
+    final forceRelay = forceRelayRaw == '1' || forceRelayRaw.toLowerCase() == 'true';
+
+    return SyncConfig(
+      baseUrl: base,
+      turnUrls: turnUrls,
+      turnUsername: turnUser.isEmpty ? null : turnUser,
+      turnCredential: turnCred.isEmpty ? null : turnCred,
+      turnForceRelay: forceRelay,
+    );
+  }
 }
 
 Duration jitter(Duration base, {int msJitter = 150}) {

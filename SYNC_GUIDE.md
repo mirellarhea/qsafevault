@@ -64,6 +64,26 @@ Network tips
 - STUN: stun:stun.l.google.com:19302 is used by default.
 - TURN: If your environment is restrictive, configure TURN on both devices (app code) and ensure credentials are valid.
 
+## Mobile platforms (Android/iOS) notes
+
+Permissions
+- Android: INTERNET and ACCESS_NETWORK_STATE in android/app/src/main/AndroidManifest.xml.
+  - These are install-time; Android won’t prompt at runtime.
+- iOS: Add NSLocalNetworkUsageDescription in ios/Runner/Info.plist to avoid local network privacy blocks when peers are on the same LAN.
+
+TURN for restrictive NATs
+- If pairing stalls after “offer received” or ICE fails on mobile, use a TURN server:
+  - Build/run with:
+    - --dart-define=QSV_TURN_URLS=turns:your.turn.example:5349
+    - --dart-define=QSV_TURN_USERNAME=yourUser
+    - --dart-define=QSV_TURN_CREDENTIAL=yourPass
+  - To force relayed transport (bypass P2P when needed):
+    - --dart-define=QSV_TURN_FORCE_RELAY=true
+
+Diagnostics
+- On Windows builds, sync logs are also written to qsafevault-sync.log next to the executable (fallback to %TEMP%).
+- Logs include ICE candidate types (host/srflx/relay) and connection state transitions.
+
 ## Security & Privacy
 
 - No plaintext SDP or PIN ever stored on the rendezvous server; Offer/Answer are sealed with a PIN‑derived key (Argon2id + AES‑GCM).

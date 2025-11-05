@@ -49,10 +49,11 @@ class SyncService {
     }
     return <String, dynamic>{
       'iceServers': iceServers,
+      'iceTransportPolicy': cfg.turnForceRelay ? 'relay' : 'all',
       'sdpSemantics': 'unified-plan',
-      'iceTransportPolicy': 'all',
       'bundlePolicy': 'max-bundle',
       'rtcpMuxPolicy': 'require',
+      'iceCandidatePoolSize': 4,
     };
   }
 
@@ -227,6 +228,14 @@ class SyncService {
     if (_pc != null) return;
     _pc = await createPeerConnection(_buildRtcConfig());
     _logSync('PeerConnection created (offerer=$isOfferer)');
+
+    _pc!.onIceCandidate = (RTCIceCandidate c) {
+      final cand = c.candidate ?? '';
+      String type = '?';
+      final m = RegExp(r'typ\s(\w+)').firstMatch(cand);
+      if (m != null) type = m.group(1)!;
+      _logSync('ICE cand type=$type');
+    };
 
     if (isOfferer) {
       final init = RTCDataChannelInit()..ordered = true;
