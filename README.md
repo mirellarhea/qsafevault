@@ -68,7 +68,6 @@ Data flow
 Operator guidance
 - Share only public keys; verify and add peers to trusted list before syncing
 - Use a new PIN for each pairing; PINs expire automatically
-- Prefer trusted networks; use TURN if NATs are restrictive
 - Clipboard handling exposes secrets to OS/global clipboard
 
 ---
@@ -159,9 +158,9 @@ Troubleshooting
 - PIN not found or expired
   - Generate a new PIN (host) and re‑enter (join)
 - “Answer not received before timeout”
-  - Check that the join device posted the answer within TTL; ensure STUN/TURN reachability
+  - Ensure the join device posted the answer within TTL
 - Flaky pairing
-  - Ensure the joiner resolves once and polls /offer (the app does this by default)
+  - Prefer Tor-based P2P sync to avoid NAT/firewall issues
 - Untrusted peer
   - Add the displayed public key to your trusted list and retry
 
@@ -208,6 +207,5 @@ License
 
 Acknowledgements
 - cryptography, pointycastle, flutter_secure_storage, flutter_webrtc and the Flutter ecosystem.
-- WebRTC STUN servers and any TURN infrastructure you configure.
 
 ---

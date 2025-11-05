@@ -6,9 +6,6 @@ on:
 env:
   PARENT_REPO: aimatochysia/qsafevault
   SYNC_BASEURL: https://qsafevault-server.vercel.app
-  QSV_TURN_URLS: ${{ secrets.QSV_TURN_URLS }}
-  QSV_TURN_USERNAME: ${{ secrets.QSV_TURN_USERNAME }}
-  QSV_TURN_CREDENTIAL: ${{ secrets.QSV_TURN_CREDENTIAL }}
   QSV_TURN_FORCE_RELAY: true
 
 jobs:
@@ -105,10 +102,6 @@ jobs:
         run: >
           flutter build apk --release
           --dart-define=QSV_SYNC_BASEURL=${SYNC_BASEURL}
-          --dart-define=QSV_TURN_URLS=${QSV_TURN_URLS}
-          --dart-define=QSV_TURN_USERNAME=${QSV_TURN_USERNAME}
-          --dart-define=QSV_TURN_CREDENTIAL=${QSV_TURN_CREDENTIAL}
-          --dart-define=QSV_TURN_FORCE_RELAY=${QSV_TURN_FORCE_RELAY}
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -119,10 +112,6 @@ jobs:
         run: >
           flutter build apk --release
           --dart-define=QSV_SYNC_BASEURL=${SYNC_BASEURL}
-          --dart-define=QSV_TURN_URLS=${QSV_TURN_URLS}
-          --dart-define=QSV_TURN_USERNAME=${QSV_TURN_USERNAME}
-          --dart-define=QSV_TURN_CREDENTIAL=${QSV_TURN_CREDENTIAL}
-          --dart-define=QSV_TURN_FORCE_RELAY=${QSV_TURN_FORCE_RELAY}
 
       - name: Build Web
         run: flutter build web --release --dart-define=QSV_SYNC_BASEURL=${SYNC_BASEURL}
