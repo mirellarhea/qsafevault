@@ -1,4 +1,4 @@
-; Inno Setup Script for QSafeVault Windows Installer
+;Inno Setup Script for QSafeVault Windows Installer
 #ifndef MyAppVersion
   #define MyAppVersion "1.0"
 #endif
