@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-ubuntu:
-    name: Build Android, Web, Linux
+    name: Build Android, Linux
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.set-tag.outputs.tag }}
@@ -112,10 +112,7 @@ jobs:
         run: >
           flutter build apk --release
           --dart-define=QSV_SYNC_BASEURL=${SYNC_BASEURL}
-
-      - name: Build Web
-        run: flutter build web --release --dart-define=QSV_SYNC_BASEURL=${SYNC_BASEURL}
-
+          
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -140,10 +137,9 @@ jobs:
           EOF
           dpkg-deb --build dist/deb/qsafevault qsafevault-linux.deb
 
-      - name: Prepare Web and Android artifacts
+      - name: Prepare Android artifacts
         run: |
           cp build/app/outputs/flutter-apk/app-release.apk qsafevault.apk
-          zip -r qsafevault-web.zip build/web
 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v4
@@ -151,7 +147,6 @@ jobs:
           name: ubuntu-artifacts
           path: |
             qsafevault.apk
-            qsafevault-web.zip
             qsafevault-linux.deb
           if-no-files-found: error
 
@@ -396,7 +391,6 @@ jobs:
             echo ""
             echo "Included installers/artifacts:"
             echo "- Android: qsafevault.apk"
-            echo "- Web: qsafevault-web.zip"
             echo "- Linux: qsafevault-linux.deb"
             echo "- Windows: qsafevault-windows.exe"
             echo "- macOS: qsafevault-macos.dmg"
