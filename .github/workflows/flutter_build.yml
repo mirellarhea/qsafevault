@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ secrets.ORIGIN_PAT }}
           ref: main
 
       - name: Set up Flutter
@@ -177,7 +177,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ secrets.ORIGIN_PAT }}
           ref: main
 
       - name: Set up Flutter
@@ -260,7 +260,6 @@ jobs:
     name: Build macOS Installer
     runs-on: macos-latest
     needs: build-ubuntu
-    if: ${{ always() && needs.build-ubuntu.result != 'cancelled' }}
     continue-on-error: true
 
     steps:
@@ -268,7 +267,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ secrets.ORIGIN_PAT }}
           ref: main
 
       - name: Set up Flutter
@@ -317,7 +316,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.PARENT_REPO }}
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ secrets.ORIGIN_PAT }}
           ref: main
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -448,7 +447,7 @@ jobs:
           tag_name: ${{ env.TAG }}
           name: ${{ env.RELEASE_NAME }}
           body: ${{ env.RELEASE_BODY }}
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ secrets.ORIGIN_PAT }}
           files: |
             release-dist/**/*
           overwrite_files: true
